@@ -1,0 +1,5 @@
+{
+  "name": "Family Shaastra",
+  "description": "A simple app for families to record, preserve, and share memories across generations.",
+  "requestFramePermissions": ["camera", "microphone"]
+}
