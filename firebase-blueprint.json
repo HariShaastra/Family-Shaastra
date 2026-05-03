@@ -1,0 +1,154 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "User profile and settings",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "displayName": { "type": "string" },
+        "photoURL": { "type": "string" },
+        "notificationToken": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "email"]
+    },
+    "Memory": {
+      "title": "Memory",
+      "description": "A family memory (photo, video, audio, document, etc.)",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "date": { "type": "string", "format": "date" },
+        "type": { "type": "string", "enum": ["text", "photo", "video", "audio", "document", "link", "album"] },
+        "fileUrl": { "type": "string" },
+        "fileName": { "type": "string" },
+        "fileType": { "type": "string" },
+        "location": { "type": "string" },
+        "tags": { "type": "array", "items": { "type": "string" } },
+        "personId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "title", "date"]
+    },
+    "FamilyMember": {
+      "title": "FamilyMember",
+      "description": "A node in the family tree",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "name": { "type": "string" },
+        "relation": { "type": "string" },
+        "description": { "type": "string" },
+        "photoUrl": { "type": "string" },
+        "parentId": { "type": "string" },
+        "siblingOfId": { "type": "string" },
+        "partnerOfId": { "type": "string" },
+        "birthDate": { "type": "string" },
+        "deathDate": { "type": "string" },
+        "linkedUserId": { "type": "string" }
+      },
+      "required": ["userId", "name", "relation"]
+    },
+    "Invitation": {
+      "title": "Invitation",
+      "description": "An invitation sent to a family member",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "senderId": { "type": "string" },
+        "senderName": { "type": "string" },
+        "recipientEmail": { "type": "string", "format": "email" },
+        "recipientName": { "type": "string" },
+        "message": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending", "accepted", "declined"] },
+        "sentAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["senderId", "recipientEmail", "status"]
+    },
+    "CustomFacility": {
+      "title": "CustomFacility",
+      "description": "A user-created facility within the app",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "title": { "type": "string" },
+        "icon": { "type": "string" },
+        "content": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "title"]
+    },
+    "TimeCapsule": {
+      "title": "TimeCapsule",
+      "description": "A digital time capsule to be opened at a future date",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "title": { "type": "string" },
+        "createdBy": { "type": "string" },
+        "description": { "type": "string" },
+        "openingDate": { "type": "string", "format": "date-time" },
+        "fileUrl": { "type": "string" },
+        "fileName": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "isOpened": { "type": "boolean" }
+      },
+      "required": ["userId", "title", "openingDate", "createdBy"]
+    },
+    "FamilyEvent": {
+      "title": "FamilyEvent",
+      "description": "A family event for planning and coordination",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "title": { "type": "string" },
+        "date": { "type": "string", "format": "date-time" },
+        "location": { "type": "string" },
+        "description": { "type": "string" },
+        "status": { "type": "string", "enum": ["planning", "confirmed", "executed", "cancelled"] },
+        "organizer": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "title", "date", "status"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "UserProfile",
+      "description": "User profile documents"
+    },
+    "/memories/{memoryId}": {
+      "schema": "Memory",
+      "description": "Family memories"
+    },
+    "/family_members/{memberId}": {
+      "schema": "FamilyMember",
+      "description": "Nodes in family trees"
+    },
+    "/invitations/{invitationId}": {
+      "schema": "Invitation",
+      "description": "Pending invitations"
+    },
+    "/facilities/{facilityId}": {
+      "schema": "CustomFacility",
+      "description": "Custom user-created tools"
+    },
+    "/time_capsules/{capsuleId}": {
+      "schema": "TimeCapsule",
+      "description": "Family time capsules"
+    },
+    "/events/{eventId}": {
+      "schema": "FamilyEvent",
+      "description": "Family events"
+    }
+  }
+}

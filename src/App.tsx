@@ -1,22 +1,13 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   ArrowLeft,
-  ExternalLink,
-  Shield,
-  Info,
-  Star,
-  Zap,
   LayoutGrid,
   Home, 
   Users, 
   Clock, 
   Image as ImageIcon, 
   Settings as SettingsIcon, 
-  Moon, 
-  Sun, 
-  Globe, 
   LogOut,
-  Lock,
   Menu,
   X,
   ChevronRight,
@@ -35,1197 +26,1059 @@ import {
   UserPlus,
   Mail,
   Check,
-  MessageSquare
+  MessageSquare,
+  Share2,
+  Copy,
+  PlusCircle,
+  FileCode,
+  Link as LinkIcon,
+  Globe,
+  Info,
+  Shield,
+  HeartHandshake,
+  Hourglass,
+  Package,
+  CalendarDays,
+  MapPin,
+  Clock3,
+  User as UserIcon
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Document, Packer, Paragraph, TextRun, HeadingLevel } from 'docx';
 import { saveAs } from 'file-saver';
+import { format } from 'date-fns';
+import { 
+  onSnapshot, 
+  collection, 
+  query, 
+  where, 
+  addDoc, 
+  updateDoc, 
+  doc, 
+  deleteDoc, 
+  getDocs,
+  setDoc,
+  orderBy,
+  getDocFromServer
+} from 'firebase/firestore';
+import { 
+  onAuthStateChanged, 
+  signInWithPopup, 
+  GoogleAuthProvider, 
+  signOut,
+  User as FirebaseUser 
+} from 'firebase/auth';
+import { db, auth } from './firebase';
+import { Logo } from './components/Logo';
 import { translations } from './translations';
 import { 
-  Language, 
   FamilyMember, 
-  TimelineEvent, 
   Memory, 
-  MemoryCategory, 
-  AppNotification, 
-  Invitation 
+  Invitation, 
+  CustomFacility,
+  UserProfile
 } from './types';
 import { cn } from './lib/utils';
 
-export default function App() {
-  const [user, setUser] = useState<{ email: string } | null>(() => {
-    const savedUser = localStorage.getItem('user');
-    return savedUser ? JSON.parse(savedUser) : null;
-  });
-  const [activeTab, setActiveTab] = useState('home');
-  const [navigationStack, setNavigationStack] = useState<string[]>(['home']);
-  const [isPremium, setIsPremium] = useState(() => {
-    return localStorage.getItem('isPremium') === 'true';
-  });
+// --- Error Handling ---
 
-  const navigateTo = (tab: string) => {
-    setActiveTab(tab);
-    setNavigationStack(prev => [...prev, tab]);
-  };
+enum OperationType {
+  CREATE = 'create',
+  UPDATE = 'update',
+  DELETE = 'delete',
+  LIST = 'list',
+  GET = 'get',
+  WRITE = 'write',
+}
 
-  const goBack = () => {
-    if (navigationStack.length > 1) {
-      const newStack = [...navigationStack];
-      newStack.pop(); // remove current
-      const prevTab = newStack[newStack.length - 1];
-      setActiveTab(prevTab);
-      setNavigationStack(newStack);
-    }
-  };
+interface FirestoreErrorInfo {
+  error: string;
+  operationType: OperationType;
+  path: string | null;
+  authInfo: {
+    userId?: string | null;
+    email?: string | null;
+    emailVerified?: boolean | null;
+    isAnonymous?: boolean | null;
+  }
+}
 
-  const [language, setLanguage] = useState<Language>(() => {
-    return (localStorage.getItem('language') as Language) || 'en';
-  });
-  const [isMenuOpen, setIsMenuOpen] = useState(false);
-  const [emailNotifications, setEmailNotifications] = useState(() => {
-    return localStorage.getItem('emailNotifications') === 'true';
-  });
+function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
+  const errInfo: FirestoreErrorInfo = {
+    error: error instanceof Error ? error.message : String(error),
+    authInfo: {
+      userId: auth.currentUser?.uid,
+      email: auth.currentUser?.email,
+      emailVerified: auth.currentUser?.emailVerified,
+      isAnonymous: auth.currentUser?.isAnonymous,
+    },
+    operationType,
+    path
+  }
+  console.error('Firestore Security Error: ', JSON.stringify(errInfo, null, 2));
+  throw new Error(JSON.stringify(errInfo));
+}
 
-  // Data State
-  const [members, setMembers] = useState<FamilyMember[]>(() => {
-    const saved = localStorage.getItem('members');
-    return saved ? JSON.parse(saved) : [
-      { id: '1', name: 'Grandpa Sharma', relation: 'Grandfather', birthDate: '1945-05-12', category: 'family' },
-      { id: '2', name: 'Grandma Sharma', relation: 'Grandmother', birthDate: '1948-08-20', category: 'family' },
-      { id: '3', name: 'Rajesh Sharma', relation: 'Father', birthDate: '1972-03-15', parentId: '1', category: 'family' },
-      { id: '4', name: 'Sunita Sharma', relation: 'Mother', birthDate: '1975-11-10', category: 'family' },
-      { id: '5', name: 'Aryan Sharma', relation: 'Son', birthDate: '2000-01-01', parentId: '3', category: 'family' },
-    ];
-  });
+// --- Components ---
 
-  const [events, setEvents] = useState<TimelineEvent[]>(() => {
-    const saved = localStorage.getItem('events');
-    return saved ? JSON.parse(saved) : [
-      { id: '1', date: '1945', title: 'Grandpa Born', description: 'The patriarch of the Sharma family was born in a small village.', type: 'birth' },
-      { id: '2', date: '1970', title: 'The Big Move', description: 'Family moved to the city for better opportunities.', type: 'milestone' },
-      { id: '3', date: '1972', title: 'Father Born', description: 'Rajesh was born, bringing joy to the household.', type: 'birth' },
-      { id: '4', date: '1998', title: 'Wedding Day', description: 'Rajesh and Sunita tied the knot in a grand ceremony.', type: 'marriage' },
-      { id: '5', date: '2000', title: 'New Generation', description: 'Aryan was born at the turn of the millennium.', type: 'birth' },
-    ];
-  });
-
-  const [memories, setMemories] = useState<Memory[]>(() => {
-    const saved = localStorage.getItem('memories');
-    return saved ? JSON.parse(saved) : [
-      { id: '1', title: 'Summer Vacation 2015', date: '2015-06-15', description: 'Our first family trip to the mountains.', author: 'Sunita', category: 'photo' },
-      { id: '2', title: 'Diwali Celebration', date: '2023-11-12', description: 'The whole family gathered for lights and sweets.', author: 'Rajesh', category: 'text' },
-      { id: '3', title: 'Graduation Day', date: '2022-05-20', description: 'Aryan graduating from university.', author: 'Grandpa', category: 'video' },
-    ];
-  });
-
-  const [notifications, setNotifications] = useState<AppNotification[]>(() => {
-    const saved = localStorage.getItem('notifications');
-    return saved ? JSON.parse(saved) : [
-      { id: '1', title: 'Milestone Reached', message: '5 years ago today, your family recorded a memory.', date: '2024-03-13', type: 'milestone', read: false },
-      { id: '2', title: 'New Invitation', message: 'Rajesh invited you to join the Sharma Family Space.', date: '2024-03-12', type: 'invitation', read: true },
-    ];
-  });
-
-  const [invitations, setInvitations] = useState<Invitation[]>(() => {
-    const saved = localStorage.getItem('invitations');
-    return saved ? JSON.parse(saved) : [];
-  });
-
-  const t = translations[language];
-
-  // Persistence Effects
-  useEffect(() => {
-    localStorage.setItem('user', user ? JSON.stringify(user) : '');
-  }, [user]);
-
-  useEffect(() => {
-    localStorage.setItem('language', language);
-  }, [language]);
-
-  useEffect(() => {
-    localStorage.setItem('emailNotifications', String(emailNotifications));
-  }, [emailNotifications]);
-
-  useEffect(() => {
-    localStorage.setItem('members', JSON.stringify(members));
-  }, [members]);
-
-  useEffect(() => {
-    localStorage.setItem('events', JSON.stringify(events));
-  }, [events]);
-
-  useEffect(() => {
-    localStorage.setItem('memories', JSON.stringify(memories));
-  }, [memories]);
-
-  useEffect(() => {
-    localStorage.setItem('notifications', JSON.stringify(notifications));
-  }, [notifications]);
-
-  useEffect(() => {
-    localStorage.setItem('invitations', JSON.stringify(invitations));
-  }, [invitations]);
-
-  useEffect(() => {
-    localStorage.setItem('isPremium', String(isPremium));
-  }, [isPremium]);
-
-  const navItems = [
-    { id: 'home', label: t.home, icon: Home },
-    { id: 'record', label: t.recordMemory, icon: Plus },
-    { id: 'memories', label: t.memories, icon: ImageIcon },
-    { id: 'tree', label: t.familyTree, icon: Users },
-    { id: 'timeline', label: t.timeline, icon: Clock },
-    { id: 'resources', label: t.resources, icon: LayoutGrid },
-    { id: 'settings', label: t.settings, icon: SettingsIcon },
-  ];
-
-  const handleLogout = () => {
-    setUser(null);
-    setActiveTab('home');
-    setNavigationStack(['home']);
-  };
-
-  const renderContent = () => {
-    if (!user) {
-      return <LoginView t={t} onLogin={(email) => setUser({ email })} />;
-    }
-    switch (activeTab) {
-      case 'home':
-        return (
-          <HomeView 
-            t={t} 
-            isPremium={isPremium}
-            onStart={() => navigateTo('record')} 
-            onExplore={() => navigateTo('memories')} 
-            onInvite={() => navigateTo('settings')}
-          />
-        );
-      case 'record':
-        return (
-          <RecordMemoryView 
-            t={t} 
-            members={members}
-            isPremium={isPremium}
-            onSave={(memory) => {
-              setMemories(prev => [memory, ...prev]);
-              navigateTo('memories');
-            }}
-          />
-        );
-      case 'tree':
-        return (
-          <FamilyTreeView 
-            t={t} 
-            members={members} 
-            setMembers={setMembers} 
-          />
-        );
-      case 'timeline':
-        return (
-          <TimelineView 
-            t={t} 
-            events={events} 
-            setEvents={setEvents} 
-          />
-        );
-      case 'memories':
-        return (
-          <MemoriesView 
-            t={t} 
-            memories={memories} 
-            setMemories={setMemories} 
-            members={members}
-            isPremium={isPremium}
-          />
-        );
-      case 'resources':
-        return (
-          <FamilyResourcesView t={t} />
-        );
-      case 'settings':
-        return (
-          <SettingsView 
-            t={t} 
-            language={language} 
-            setLanguage={setLanguage} 
-            members={members}
-            setMembers={setMembers}
-            invitations={invitations}
-            setInvitations={setInvitations}
-            notifications={notifications}
-            setNotifications={setNotifications}
-            emailNotifications={emailNotifications}
-            setEmailNotifications={setEmailNotifications}
-            isPremium={isPremium}
-            setIsPremium={setIsPremium}
-            onLogout={handleLogout}
-          />
-        );
-      default:
-        return (
-          <HomeView 
-            t={t} 
-            isPremium={isPremium}
-            onStart={() => navigateTo('record')} 
-            onExplore={() => navigateTo('memories')} 
-            onInvite={() => navigateTo('settings')}
-          />
-        );
-    }
+const Button = ({ children, onClick, variant = 'primary', className, icon: Icon, disabled }: any) => {
+  const variants: any = {
+    primary: 'bg-emerald-600 text-white hover:bg-emerald-700 shadow-md shadow-emerald-600/20',
+    secondary: 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-50',
+    ghost: 'bg-transparent text-slate-600 hover:bg-slate-100',
+    danger: 'bg-red-50 text-red-600 hover:bg-red-100 border border-red-100',
+    accent: 'bg-amber-400 text-amber-950 hover:bg-amber-500 shadow-md shadow-amber-400/20',
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 transition-colors duration-300 overflow-x-hidden flex flex-col md:flex-row">
-      {/* Desktop Sidebar */}
-      <aside className="hidden md:flex w-72 flex-col fixed inset-y-0 border-r border-slate-200 bg-white z-50">
-        <div className="p-6">
-          <button 
-            onClick={() => navigateTo('home')}
-            className="text-2xl font-black bg-gradient-to-r from-emerald-600 to-teal-600 bg-clip-text text-transparent hover:opacity-80 transition-opacity"
-          >
-            {t.title}
+    <button
+      disabled={disabled}
+      onClick={onClick}
+      className={cn(
+        'px-6 py-2.5 rounded-2xl font-bold flex items-center justify-center gap-2 transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed',
+        variants[variant],
+        className
+      )}
+    >
+      {Icon && <Icon className="w-5 h-5" />}
+      {children}
+    </button>
+  );
+};
+
+const Card = ({ children, className }: any) => (
+  <div className={cn('bg-white border border-slate-200 rounded-[2rem] shadow-sm overflow-hidden', className)}>
+    {children}
+  </div>
+);
+
+const Modal = ({ isOpen, onClose, title, children }: { isOpen: boolean, onClose: () => void, title: string, children: React.ReactNode }) => {
+  if (!isOpen) return null;
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-md">
+      <motion.div 
+        initial={{ opacity: 0, scale: 0.9, y: 20 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        exit={{ opacity: 0, scale: 0.9, y: 20 }}
+        className="bg-white border border-slate-100 rounded-[2.5rem] w-full max-w-lg overflow-hidden shadow-2xl"
+      >
+        <div className="p-8 border-b border-slate-50 flex items-center justify-between">
+          <h3 className="text-2xl font-black text-slate-900 font-serif">{title}</h3>
+          <button onClick={onClose} className="p-2 hover:bg-slate-100 rounded-full transition-colors">
+            <X className="w-6 h-6 text-slate-400" />
           </button>
         </div>
+        <div className="p-8 max-h-[70vh] overflow-y-auto">
+          {children}
+        </div>
+      </motion.div>
+    </div>
+  );
+};
 
-        <nav className="flex-1 px-4 space-y-1 overflow-y-auto">
+// --- Main App ---
+
+export default function App() {
+  const [currentUser, setCurrentUser] = useState<FirebaseUser | null>(null);
+  const [activeTab, setActiveTab] = useState('home');
+  const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const [loading, setLoading] = useState(true);
+
+  // Firestore Data
+  const [members, setMembers] = useState<FamilyMember[]>([]);
+  const [memories, setMemories] = useState<Memory[]>([]);
+  const [invitations, setInvitations] = useState<Invitation[]>([]);
+  const [facilities, setFacilities] = useState<CustomFacility[]>([]);
+  const [notifications, setNotifications] = useState<any[]>([]);
+  const [activeFacility, setActiveFacility] = useState<CustomFacility | null>(null);
+
+  const t = translations.en;
+
+  useEffect(() => {
+    async function testConnection() {
+      try {
+        await getDocFromServer(doc(db, 'test', 'connection'));
+      } catch (error) {
+        if(error instanceof Error && error.message.includes('the client is offline')) {
+          console.error("Please check your Firebase configuration or connection.");
+        }
+      }
+    }
+    testConnection();
+
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      setCurrentUser(user as FirebaseUser);
+      setLoading(false);
+      if (user) {
+        try {
+          await setDoc(doc(db, 'users', user.uid), {
+            userId: user.uid,
+            email: user.email,
+            displayName: user.displayName,
+            photoURL: user.photoURL,
+            createdAt: new Date().toISOString()
+          }, { merge: true });
+        } catch (e) {
+          handleFirestoreError(e, OperationType.WRITE, `users/${user.uid}`);
+        }
+        // Sync data
+        syncData(user.uid, user.email || '');
+        setupNotifications();
+        syncUserNode(user as FirebaseUser);
+      }
+    });
+    return () => unsubscribe();
+  }, []);
+
+  const syncUserNode = async (user: FirebaseUser) => {
+    try {
+      const q = query(collection(db, 'family_members'), where('userId', '==', user.uid), where('isMe', '==', true));
+      const snap = await getDocs(q);
+      if (snap.empty) {
+        await addDoc(collection(db, 'family_members'), {
+          userId: user.uid,
+          name: user.displayName,
+          relation: 'Me',
+          description: 'App User',
+          photoUrl: user.photoURL,
+          isMe: true,
+          createdAt: new Date().toISOString()
+        });
+        showNotification("Welcome to Family Shaastra", "I've added you to your own Family Tree! Start adding your ancestors and siblings.");
+      }
+    } catch (e) {
+      handleFirestoreError(e, OperationType.WRITE, 'family_members');
+    }
+  };
+
+  const syncData = (uid: string, email: string) => {
+    // Members
+    onSnapshot(query(collection(db, 'family_members'), where('userId', '==', uid)), (snap) => {
+      setMembers(snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as FamilyMember)));
+    }, (err) => {
+      handleFirestoreError(err, OperationType.LIST, 'family_members');
+    });
+    // Memories
+    onSnapshot(query(collection(db, 'memories'), where('userId', '==', uid), orderBy('date', 'desc')), (snap) => {
+      setMemories(snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Memory)));
+    }, (err) => {
+      handleFirestoreError(err, OperationType.LIST, 'memories');
+    });
+    // Invitations
+    onSnapshot(query(collection(db, 'invitations'), where('recipientEmail', '==', email)), (snap) => {
+      setInvitations(snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Invitation)));
+    }, (err) => {
+      handleFirestoreError(err, OperationType.LIST, 'invitations');
+    });
+    // Facilities
+    onSnapshot(query(collection(db, 'facilities'), where('userId', '==', uid)), (snap) => {
+      setFacilities(snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as CustomFacility)));
+    }, (err) => {
+      handleFirestoreError(err, OperationType.LIST, 'facilities');
+    });
+  };
+
+  const setupNotifications = () => {
+    if ('Notification' in window) {
+      Notification.requestPermission();
+    }
+  };
+
+  const showNotification = (title: string, body: string) => {
+    if (Notification.permission === 'granted') {
+      new Notification(title, { body });
+    }
+    setNotifications(prev => [{ id: Date.now(), title, body, date: new Date().toISOString(), read: false }, ...prev]);
+  };
+
+  const handleLogin = async () => {
+    const provider = new GoogleAuthProvider();
+    try {
+      const result = await signInWithPopup(auth, provider);
+      // Create user profile if not exists
+      await setDoc(doc(db, 'users', result.user.uid), {
+        userId: result.user.uid,
+        email: result.user.email,
+        displayName: result.user.displayName,
+        photoURL: result.user.photoURL,
+        createdAt: new Date().toISOString()
+      }, { merge: true });
+    } catch (error) {
+      console.error('Login error:', error);
+    }
+  };
+
+  const handleLogout = () => signOut(auth);
+
+  const navigateTo = (tab: string) => {
+    setActiveTab(tab);
+    setIsMenuOpen(false);
+  };
+
+  const navItems = [
+    { id: 'home', label: t.home, icon: Home },
+    { id: 'tree', label: t.familyTree, icon: Users },
+    { id: 'events', label: t.eventPlanner || 'Events', icon: CalendarDays },
+    { id: 'capsule', label: t.timeCapsule || 'Time Capsule', icon: Hourglass },
+    { id: 'timeline', label: t.timeline, icon: Clock },
+    { id: 'memories', label: t.memories, icon: ImageIcon },
+    { id: 'facilities', label: t.facilities, icon: LayoutGrid },
+    { id: 'settings', label: t.settings, icon: SettingsIcon },
+  ];
+
+  if (loading) return <div className="h-screen flex items-center justify-center bg-slate-50 text-emerald-600 font-bold">Initialising Heritage...</div>;
+
+  if (!currentUser) return <LoginView onLogin={handleLogin} t={t} />;
+
+  return (
+    <div className="min-h-screen bg-[#fdfcfb] flex flex-col md:flex-row overflow-x-hidden">
+      {/* Sidebar - Desktop */}
+      <aside className="hidden md:flex md:w-64 lg:w-80 flex-col fixed inset-y-0 border-r border-slate-100 bg-white/50 backdrop-blur-xl z-50">
+        <div className="p-6 lg:p-8">
+          <Logo />
+        </div>
+        <nav className="flex-1 px-4 lg:px-6 space-y-1.5 py-4">
           {navItems.map((item) => (
             <button
               key={item.id}
               onClick={() => navigateTo(item.id)}
               className={cn(
-                "w-full px-4 py-3 rounded-xl text-sm font-bold transition-all flex items-center gap-3",
+                "w-full px-5 lg:px-6 py-3.5 lg:py-4 rounded-[1.5rem] text-sm font-black transition-all flex items-center gap-3 lg:gap-4 group",
                 activeTab === item.id 
-                  ? "bg-emerald-50 text-emerald-600 shadow-sm ring-1 ring-emerald-500/10" 
-                  : "text-slate-500 hover:bg-slate-50 hover:text-slate-900"
+                  ? "bg-emerald-600 text-white shadow-lg shadow-emerald-600/20" 
+                  : "text-slate-400 hover:bg-emerald-50 hover:text-emerald-700"
               )}
             >
-              <item.icon className={cn("w-5 h-5", activeTab === item.id ? "text-emerald-600" : "text-slate-400")} />
+              <item.icon className={cn("w-5 h-5 lg:w-6 lg:h-6", activeTab === item.id ? "text-white" : "text-slate-300 group-hover:text-emerald-600")} />
               {item.label}
             </button>
           ))}
         </nav>
-
-        <div className="p-4 border-t border-slate-100 space-y-4">
-          <div className="flex items-center justify-between px-2">
-            <div className="flex items-center gap-2">
-              <Globe className="w-4 h-4 text-slate-400" />
-              <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">{t.language}</span>
-            </div>
-            <div className="flex gap-1">
-              {(['en', 'hi', 'ta'] as Language[]).map((lang) => (
-                <button
-                  key={lang}
-                  onClick={() => setLanguage(lang)}
-                  className={cn(
-                    "w-8 h-8 rounded-lg text-[10px] font-black flex items-center justify-center transition-all border",
-                    language === lang 
-                      ? "bg-emerald-600 border-emerald-600 text-white shadow-sm" 
-                      : "bg-white border-slate-200 text-slate-400 hover:border-emerald-500 hover:text-emerald-600"
-                  )}
-                >
-                  {lang.toUpperCase()}
-                </button>
-              ))}
+        <div className="p-6 lg:p-8 border-t border-slate-50">
+          <div className="flex items-center gap-3 lg:gap-4 bg-slate-50 p-4 rounded-3xl border border-slate-100">
+            <img src={currentUser.photoURL || ''} alt="" className="w-8 h-8 lg:w-10 lg:h-10 rounded-full border-2 border-white shadow-sm" />
+            <div className="flex-1 min-w-0">
+              <p className="text-[10px] lg:text-xs font-black text-slate-900 truncate">{currentUser.displayName}</p>
+              <button onClick={handleLogout} className="text-[9px] lg:text-[10px] font-bold text-red-500 hover:text-red-600 uppercase tracking-widest flex items-center gap-1">
+                <LogOut className="w-3 h-3 shrink-0" /> {t.logout}
+              </button>
             </div>
           </div>
-
-          {!isPremium && (
-            <button 
-              onClick={() => navigateTo('settings')}
-              className="w-full p-4 bg-emerald-50 rounded-2xl border border-emerald-100 group hover:bg-emerald-100 transition-all text-left"
-            >
-              <div className="flex items-center gap-2 mb-1">
-                <Star className="w-4 h-4 text-emerald-600 fill-emerald-600" />
-                <span className="text-xs font-black text-emerald-700 uppercase tracking-tight">{t.premium}</span>
-              </div>
-              <p className="text-[10px] text-emerald-600/80 font-medium leading-tight">Unlock unlimited storage and remove all advertisements.</p>
-            </button>
-          )}
-
-          {user && (
-            <div className="flex items-center gap-3 p-2">
-              <div className="w-10 h-10 bg-slate-100 rounded-full flex items-center justify-center border border-slate-200">
-                <Users className="w-5 h-5 text-slate-400" />
-              </div>
-              <div className="flex-1 min-w-0">
-                <p className="text-xs font-bold text-slate-900 truncate">{user.email}</p>
-                <button 
-                  onClick={handleLogout}
-                  className="text-[10px] font-bold text-red-500 hover:text-red-600 uppercase tracking-wider"
-                >
-                  {t.logout}
-                </button>
-              </div>
-            </div>
-          )}
         </div>
       </aside>
 
-      {/* Main Content Wrapper */}
-      <div className="flex-1 flex flex-col md:pl-72 min-h-screen">
-        {/* Header (Mobile & Contextual) */}
-        <header className="sticky top-0 z-40 bg-white/80 backdrop-blur-md border-b border-slate-200 h-16 flex items-center px-4 justify-between">
-          <div className="flex items-center gap-3">
-            {navigationStack.length > 1 && (
-              <button
-                onClick={goBack}
-                className="p-2 -ml-2 rounded-full hover:bg-slate-100 text-slate-600 transition-colors"
-              >
-                <ArrowLeft className="w-5 h-5" />
-              </button>
-            )}
-            <h1 className="md:hidden text-xl font-black bg-gradient-to-r from-emerald-600 to-teal-600 bg-clip-text text-transparent">
-              {t.title}
-            </h1>
-            <h2 className="hidden md:block text-lg font-bold text-slate-900">
-              {navItems.find(i => i.id === activeTab)?.label || t.home}
-            </h2>
-          </div>
+      {/* Main Content Area */}
+      <div className="flex-1 md:pl-64 lg:pl-80 flex flex-col min-h-screen overflow-x-hidden">
+        {/* Header - Mobile */}
+        <header className="sticky top-0 z-40 bg-white/80 backdrop-blur-md border-b border-slate-100 h-20 flex items-center px-6 justify-between md:hidden">
+          <Logo />
+          <button 
+            onClick={() => setIsMenuOpen(!isMenuOpen)}
+            className="p-3 bg-slate-50 rounded-2xl border border-slate-100"
+          >
+            {isMenuOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
+          </button>
+        </header>
 
-          <div className="flex items-center gap-2">
-            {user && (
-              <button 
-                className="md:hidden p-2 rounded-full hover:bg-slate-100 transition-colors"
-                onClick={() => setIsMenuOpen(!isMenuOpen)}
-              >
-                {isMenuOpen ? <X className="w-6 h-6 text-slate-600" /> : <Menu className="w-6 h-6 text-slate-600" />}
-              </button>
-            )}
-            
-            <div className="hidden md:flex items-center gap-2">
-              <div className="px-3 py-1 bg-slate-100 rounded-full text-[10px] font-bold text-slate-500 uppercase tracking-widest">
-                {isPremium ? t.premiumVersion : t.freeVersion}
-              </div>
-            </div>
+        {/* Header - Contextual (Notifications/Logo) */}
+        <header className="hidden md:flex sticky top-0 z-40 h-24 items-center px-8 lg:px-12 justify-between bg-white/40 backdrop-blur-sm pointer-events-none">
+          <div className="pointer-events-auto">
+             <h2 className="text-xl lg:text-2xl font-black text-slate-900 font-serif">
+               {navItems.find(i => i.id === activeTab)?.label}
+             </h2>
+          </div>
+          <div className="flex items-center gap-4 pointer-events-auto">
+            <button onClick={() => navigateTo('notifications')} className="p-2.5 lg:p-3 bg-white border border-slate-100 rounded-2xl shadow-sm hover:scale-110 transition-transform relative">
+              <Bell className="w-5 h-5 lg:w-6 lg:h-6 text-slate-600" />
+              {notifications.some(n => !n.read) && <span className="absolute top-2 right-2 w-3 h-3 bg-red-500 rounded-full border-2 border-white" />}
+            </button>
           </div>
         </header>
 
-        {/* Mobile Menu Overlay */}
+        {/* Mobile Navigation Menu */}
         <AnimatePresence>
           {isMenuOpen && (
             <motion.div
               initial={{ opacity: 0, x: -100 }}
               animate={{ opacity: 1, x: 0 }}
               exit={{ opacity: 0, x: -100 }}
-              className="fixed inset-0 z-50 md:hidden bg-white flex flex-col"
+              className="fixed inset-0 z-[60] bg-white flex flex-col md:hidden"
             >
-              <div className="p-4 flex items-center justify-between border-b border-slate-100">
-                <span className="text-xl font-black bg-gradient-to-r from-emerald-600 to-teal-600 bg-clip-text text-transparent">
-                  {t.title}
-                </span>
-                <button 
-                  onClick={() => setIsMenuOpen(false)}
-                  className="p-2 rounded-full hover:bg-slate-100 transition-colors"
-                >
-                  <X className="w-6 h-6 text-slate-600" />
+              <div className="p-6 border-b border-slate-100 flex items-center justify-between">
+                <Logo />
+                <button onClick={() => setIsMenuOpen(false)} className="p-3 bg-slate-50 rounded-2xl">
+                  <X className="w-6 h-6" />
                 </button>
               </div>
-              
-              <nav className="flex-1 p-4 space-y-2 overflow-y-auto">
+              <nav className="flex-1 p-6 space-y-3">
                 {navItems.map((item) => (
                   <button
                     key={item.id}
-                    onClick={() => {
-                      navigateTo(item.id);
-                      setIsMenuOpen(false);
-                    }}
+                    onClick={() => navigateTo(item.id)}
                     className={cn(
-                      "w-full px-4 py-4 rounded-2xl text-lg font-bold flex items-center gap-4 transition-all",
+                      "w-full p-5 rounded-[2rem] text-lg font-black flex items-center gap-6 transition-all",
                       activeTab === item.id 
-                        ? "bg-emerald-50 text-emerald-600 shadow-sm" 
-                        : "text-slate-600 active:bg-slate-50"
+                        ? "bg-emerald-600 text-white shadow-xl" 
+                        : "text-slate-500"
                     )}
                   >
-                    <item.icon className={cn("w-6 h-6", activeTab === item.id ? "text-emerald-600" : "text-slate-400")} />
+                    <item.icon className="w-8 h-8" />
                     {item.label}
                   </button>
                 ))}
               </nav>
-
-              <div className="p-6 border-t border-slate-100 space-y-6">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-black text-slate-400 uppercase tracking-widest">{t.language}</span>
-                  <div className="flex gap-2">
-                    {(['en', 'hi', 'ta'] as Language[]).map((lang) => (
-                      <button
-                        key={lang}
-                        onClick={() => setLanguage(lang)}
-                        className={cn(
-                          "px-4 py-2 rounded-xl text-xs font-black transition-all border",
-                          language === lang 
-                            ? "bg-emerald-600 border-emerald-600 text-white" 
-                            : "bg-white border-slate-200 text-slate-400"
-                        )}
-                      >
-                        {lang.toUpperCase()}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                {user && (
-                  <div className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl">
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 bg-white rounded-full flex items-center justify-center border border-slate-200">
-                        <Users className="w-5 h-5 text-slate-400" />
-                      </div>
-                      <p className="text-sm font-bold text-slate-900 truncate max-w-[150px]">{user.email}</p>
-                    </div>
-                    <button 
-                      onClick={handleLogout}
-                      className="p-2 text-red-500 hover:bg-red-50 rounded-xl transition-colors"
-                    >
-                      <LogOut className="w-5 h-5" />
-                    </button>
-                  </div>
-                )}
+              <div className="p-8 border-t border-slate-50">
+                <Button variant="danger" className="w-full py-5 rounded-[2rem]" onClick={handleLogout} icon={LogOut}>
+                  {t.logout}
+                </Button>
               </div>
             </motion.div>
           )}
         </AnimatePresence>
 
-        {/* Main Content */}
-        <main className="flex-1 w-full max-w-5xl mx-auto px-4 py-8 md:px-8">
-          <AnimatePresence mode="wait">
-            <motion.div
-              key={activeTab}
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -10 }}
-              transition={{ duration: 0.2 }}
-            >
-              {renderContent()}
-            </motion.div>
-          </AnimatePresence>
+        <main className="flex-1 w-full max-w-7xl mx-auto px-6 md:px-8 lg:px-12 py-8">
+           <AnimatePresence mode="wait">
+             <motion.div
+               key={activeTab}
+               initial={{ opacity: 0, y: 20 }}
+               animate={{ opacity: 1, y: 0 }}
+               exit={{ opacity: 0, y: -20 }}
+               transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
+             >
+                {renderContent(activeTab, t, currentUser!, members, memories, invitations, facilities, setMembers, setMemories, setInvitations, setFacilities, showNotification, navigateTo, activeFacility, setActiveFacility, notifications)}
+             </motion.div>
+           </AnimatePresence>
         </main>
-
-        {/* Footer */}
-        <footer className="border-t border-slate-200 py-8 px-4">
-          <div className="max-w-5xl mx-auto text-center md:text-left flex flex-col md:flex-row justify-between items-center gap-4 text-slate-400 text-[10px] font-bold uppercase tracking-widest">
-            <p>© 2026 {t.title}. {t.tagline}</p>
-            <div className="flex gap-6">
-              <button onClick={() => navigateTo('settings')} className="hover:text-emerald-600 transition-colors">{t.guide}</button>
-              <button onClick={() => navigateTo('settings')} className="hover:text-emerald-600 transition-colors">{t.disclaimer}</button>
-            </div>
-          </div>
-        </footer>
       </div>
     </div>
   );
 }
 
-function Modal({ isOpen, onClose, title, children }: { isOpen: boolean, onClose: () => void, title: string, children: React.ReactNode }) {
-  if (!isOpen) return null;
+// --- View Logic ---
 
-  return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-      <motion.div 
-        initial={{ opacity: 0, scale: 0.95 }}
-        animate={{ opacity: 1, scale: 1 }}
-        className="bg-white border border-slate-200 rounded-3xl w-full max-w-md overflow-hidden shadow-2xl"
-      >
-        <div className="p-6 border-b border-slate-100 flex items-center justify-between">
-          <h3 className="text-xl font-bold text-slate-900">{title}</h3>
-          <button onClick={onClose} className="p-2 hover:bg-slate-100 rounded-full transition-colors">
-            <X className="w-5 h-5" />
-          </button>
-        </div>
-        <div className="p-6">
-          {children}
-        </div>
-      </motion.div>
-    </div>
-  );
+function renderContent(tab: string, t: any, user: FirebaseUser, members: FamilyMember[], memories: Memory[], invitations: Invitation[], facilities: CustomFacility[], setMembers: any, setMemories: any, setInvitations: any, setFacilities: any, showNotification: any, navigateTo: any, activeFacility: CustomFacility | null, setActiveFacility: any, notifications: any[]) {
+  switch (tab) {
+    case 'home': return <HomeView t={t} user={user} navigateTo={navigateTo} />;
+    case 'tree': return <FamilyTreeView t={t} members={members} setMembers={setMembers} user={user} />;
+    case 'timeline': return <TimelineView t={t} memories={memories} />;
+    case 'events': return <EventPlannerView t={t} user={user} />;
+    case 'capsule': return <TimeCapsuleView t={t} user={user} />;
+    case 'memories': return <MemoriesView t={t} memories={memories} setMemories={setMemories} user={user} members={members} />;
+    case 'facilities': return <FacilitiesView t={t} facilities={facilities} user={user} setFacilities={setFacilities} activeFacility={activeFacility} setActiveFacility={setActiveFacility} />;
+    case 'settings': return <SettingsView t={t} user={user} invitations={invitations} setInvitations={setInvitations} setMembers={setMembers} navigateTo={navigateTo} members={members} />;
+    case 'notifications': return <NotificationsTab t={t} notifications={notifications} />;
+    case 'guide': return <GuideView t={t} navigateTo={navigateTo} />;
+    case 'disclaimer': return <DisclaimerView t={t} navigateTo={navigateTo} />;
+    default: return <HomeView t={t} user={user} navigateTo={navigateTo} />;
+  }
 }
 
-function HomeView({ t, isPremium, onStart, onExplore, onInvite }: { t: any, isPremium: boolean, onStart: () => void, onExplore: () => void, onInvite: () => void }) {
-  return (
-    <div className="space-y-12 overflow-hidden">
-      <section className="text-center space-y-6 py-12 relative">
-        <div className="absolute inset-0 -z-10 pointer-events-none">
-          {[...Array(12)].map((_, i) => (
-            <motion.div
-              key={i}
-              className="absolute bg-emerald-400/10 rounded-full blur-xl"
-              style={{
-                width: Math.random() * 100 + 50,
-                height: Math.random() * 100 + 50,
-                left: `${Math.random() * 100}%`,
-                top: `${Math.random() * 100}%`,
-              }}
-              animate={{
-                y: [0, -40, 0],
-                opacity: [0.3, 0.6, 0.3],
-                scale: [1, 1.1, 1],
-              }}
-              transition={{
-                duration: Math.random() * 5 + 5,
-                repeat: Infinity,
-                ease: "easeInOut",
-              }}
-            />
-          ))}
-        </div>
+// --- Specialized Views ---
 
-        <motion.h1 
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="text-4xl md:text-6xl font-bold text-slate-900 tracking-tight"
-        >
-          {t.welcome}
-        </motion.h1>
-        <motion.p 
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.1 }}
-          className="text-xl text-slate-600 max-w-2xl mx-auto"
-        >
-          {t.tagline}
-        </motion.p>
-        <div className="flex flex-wrap justify-center gap-4 pt-4">
-          <button 
-            onClick={onStart}
-            className="px-8 py-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-full font-semibold transition-all shadow-lg shadow-emerald-600/20"
-          >
-            {t.recordMemory}
-          </button>
-          <button 
-            onClick={onExplore}
-            className="px-8 py-3 bg-white border border-slate-200 text-slate-900 rounded-full font-semibold transition-all"
-          >
-            {t.memories}
-          </button>
-          <button 
-            onClick={onInvite}
-            className="px-8 py-3 bg-slate-900 hover:bg-slate-800 text-white rounded-full font-semibold transition-all flex items-center gap-2"
-          >
-            <UserPlus className="w-5 h-5" /> {t.invite}
-          </button>
-        </div>
-      </section>
+function TimeCapsuleView({ t, user }: any) {
+  const [capsules, setCapsules] = useState<any[]>([]);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [formData, setFormData] = useState({ title: '', description: '', createdBy: user.displayName || '', openingDate: '', fileUrl: '' });
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        {[
-          { icon: Plus, title: t.recordMemory, desc: 'Record stories in text, photo, audio, or video.' },
-          { icon: Users, title: t.familyTree, desc: 'Visualize your lineage across generations.' },
-          { icon: Clock, title: t.timeline, desc: 'Track key milestones and historical events.' },
-        ].map((feature, i) => (
-          <motion.div 
-            key={i} 
-            initial={{ opacity: 0, scale: 0.9 }}
-            whileInView={{ opacity: 1, scale: 1 }}
-            viewport={{ once: true }}
-            transition={{ delay: i * 0.1 }}
-            className="p-6 bg-white border border-slate-200 rounded-3xl hover:shadow-xl transition-all group"
-          >
-            <div className="w-12 h-12 bg-emerald-50 rounded-2xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
-              <feature.icon className="w-6 h-6 text-emerald-600" />
-            </div>
-            <h3 className="text-xl font-bold text-slate-900 mb-2">{feature.title}</h3>
-            <p className="text-slate-600">{feature.desc}</p>
-          </motion.div>
-        ))}
-      </div>
+  useEffect(() => {
+    const q = query(collection(db, 'time_capsules'), where('userId', '==', user.uid), orderBy('createdAt', 'desc'));
+    return onSnapshot(q, (snapshot) => {
+      setCapsules(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    }, (err) => {
+      handleFirestoreError(err, OperationType.LIST, 'time_capsules');
+    });
+  }, [user.uid]);
 
-      {/* Banner Ad Section */}
-      {!isPremium && (
-        <section className="mt-12 p-8 bg-slate-100 rounded-3xl border border-slate-200 text-center">
-          <div className="max-w-md mx-auto space-y-4">
-            <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400">{t.sponsored}</span>
-            <div className="aspect-[3/1] bg-slate-200 rounded-2xl flex items-center justify-center border-2 border-dashed border-slate-300">
-              <p className="text-slate-500 font-medium italic">Preserve your family legacy with Ancestry.com</p>
-            </div>
-            <p className="text-xs text-slate-500">{t.sponsoredBy} Heritage Partners</p>
-          </div>
-        </section>
-      )}
-    </div>
-  );
-}
-
-function FamilyResourcesView({ t }: { t: any }) {
-  const resources = [
-    { title: 'Genealogy Research', provider: 'Ancestry Experts', desc: 'Professional help to trace your roots back centuries.', link: '#' },
-    { title: 'Photo Restoration', provider: 'MemoryFix', desc: 'Bring your old, damaged family photos back to life.', link: '#' },
-    { title: 'Oral History Recording', provider: 'StoryKeepers', desc: 'Professional interviewers to record your elders\' stories.', link: '#' },
-    { title: 'Family Reunion Planning', provider: 'GatherRound', desc: 'Tools and services to plan the perfect family gathering.', link: '#' },
-  ];
-
-  return (
-    <div className="space-y-8">
-      <div className="text-center space-y-4">
-        <h2 className="text-3xl font-bold text-slate-900">{t.resources}</h2>
-        <p className="text-slate-600 max-w-2xl mx-auto">Discover services and tools to help you preserve and celebrate your family history.</p>
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        {resources.map((res, i) => (
-          <motion.div
-            key={i}
-            initial={{ opacity: 0, y: 20 }}
-            whileInView={{ opacity: 1, y: 0 }}
-            viewport={{ once: true }}
-            transition={{ delay: i * 0.1 }}
-            className="p-6 bg-white border border-slate-200 rounded-3xl hover:shadow-lg transition-all flex flex-col justify-between"
-          >
-            <div>
-              <div className="flex items-center justify-between mb-2">
-                <h3 className="text-xl font-bold text-slate-900">{res.title}</h3>
-                <span className="text-[10px] font-bold px-2 py-1 bg-emerald-50 text-emerald-600 rounded-full uppercase">{t.sponsored}</span>
-              </div>
-              <p className="text-sm text-emerald-600 font-medium mb-3">{res.provider}</p>
-              <p className="text-slate-600 text-sm mb-6">{res.desc}</p>
-            </div>
-            <button className="w-full py-2 bg-slate-50 border border-slate-200 text-slate-600 rounded-xl text-sm font-bold flex items-center justify-center gap-2 hover:bg-slate-100 transition-all">
-              Learn More <ExternalLink className="w-4 h-4" />
-            </button>
-          </motion.div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function RecordMemoryView({ t, members, isPremium, onSave }: { t: any, members: FamilyMember[], isPremium: boolean, onSave: (memory: Memory) => void }) {
-  const [formData, setFormData] = useState<Partial<Memory>>({
-    category: 'text',
-    date: new Date().toISOString().split('T')[0]
-  });
-  const [isRecording, setIsRecording] = useState(false);
-  const [file, setFile] = useState<File | null>(null);
-
-  const prompts = [
-    { text: "What was your childhood like?", sponsored: false },
-    { text: "What was your first job?", sponsored: false },
-    { text: "How did you meet your spouse?", sponsored: true, sponsor: "WeddingWire" },
-    { text: "What was the happiest moment in your life?", sponsored: false },
-    { text: "What advice would you give to the next generation?", sponsored: true, sponsor: "LegacyBooks" }
-  ];
+  const handleSave = async (e: any) => {
+    e.preventDefault();
+    try {
+      await addDoc(collection(db, 'time_capsules'), {
+        ...formData,
+        userId: user.uid,
+        createdAt: new Date().toISOString(),
+        isOpened: false
+      });
+      setFormData({ title: '', description: '', createdBy: user.displayName || '', openingDate: '', fileUrl: '' });
+      setIsModalOpen(false);
+    } catch (err) {
+      handleFirestoreError(err, OperationType.CREATE, 'time_capsules');
+    }
+  };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files[0]) {
-      const selectedFile = e.target.files[0];
-      setFile(selectedFile);
-      
-      // Convert to base64 for local storage preview
+    const file = e.target.files?.[0];
+    if (file) {
       const reader = new FileReader();
-      reader.onloadend = () => {
-        setFormData(prev => ({ ...prev, imageUrl: reader.result as string }));
-      };
-      reader.readAsDataURL(selectedFile);
+      reader.onloadend = () => setFormData({ ...formData, fileUrl: reader.result as string });
+      reader.readAsDataURL(file);
     }
   };
 
-  const handleVoiceInput = () => {
-    if (!('webkitSpeechRecognition' in window)) {
-      alert("Speech recognition not supported in this browser.");
-      return;
-    }
-
-    const recognition = new (window as any).webkitSpeechRecognition();
-    recognition.continuous = false;
-    recognition.interimResults = false;
-    recognition.lang = 'en-US';
-
-    recognition.onstart = () => setIsRecording(true);
-    recognition.onend = () => setIsRecording(false);
-    recognition.onresult = (event: any) => {
-      const text = event.results[0][0].transcript;
-      setFormData(prev => ({ ...prev, description: (prev.description || '') + ' ' + text }));
-    };
-
-    recognition.start();
+  const shareCapsule = (capsule: any) => {
+    const text = `⏳ *Time Capsule: ${capsule.title}*\n\nCreated by: ${capsule.createdBy}\nSet to be opened on: ${format(new Date(capsule.openingDate), 'PPP p')}\n\nPreserved via Family Shaastra.`;
+    const url = `https://wa.me/?text=${encodeURIComponent(text)}`;
+    window.open(url, '_blank');
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    const newMemory: Memory = {
-      ...formData,
-      id: Math.random().toString(36).substr(2, 9),
-    } as Memory;
-    onSave(newMemory);
-  };
+  const isLocked = (date: string) => new Date(date) > new Date();
 
   return (
-    <div className="max-w-3xl mx-auto space-y-8">
-      <div className="flex items-center justify-between">
-        <h2 className="text-3xl font-bold text-slate-900">{t.recordMemory}</h2>
+    <div className="space-y-12">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 px-2">
+        <div className="space-y-2">
+           <h2 className="text-4xl font-black font-serif text-slate-900 flex items-center gap-3">
+             <Hourglass className="w-10 h-10 text-emerald-600" /> Time Capsule
+           </h2>
+           <p className="text-slate-500 max-w-xl">
+             A digital vault for the future. Lock away memories, messages, or files to be opened by your family on a specific future date.
+           </p>
+        </div>
+        <Button onClick={() => setIsModalOpen(true)} icon={Package} variant="accent">Create Capsule</Button>
       </div>
 
-      <div className="bg-white border border-slate-200 rounded-3xl p-8 shadow-sm">
-        <form onSubmit={handleSubmit} className="space-y-6">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">{t.title_label}</label>
-              <input 
-                required
-                type="text" 
-                value={formData.title || ''} 
-                onChange={e => setFormData({ ...formData, title: e.target.value })}
-                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2 text-slate-900"
-                placeholder="e.g. My First Day at School"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">{t.date}</label>
-              <input 
-                required
-                type="date" 
-                value={formData.date || ''} 
-                onChange={e => setFormData({ ...formData, date: e.target.value })}
-                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2 text-slate-900"
-              />
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">Person Associated</label>
-              <select 
-                value={formData.personId || ''} 
-                onChange={e => setFormData({ ...formData, personId: e.target.value })}
-                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2 text-slate-900"
-              >
-                <option value="">Select a person</option>
-                {members.map(m => (
-                  <option key={m.id} value={m.id}>{m.name}</option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">{t.categories}</label>
-              <div className="flex gap-2">
-                {(['text', 'photo', 'audio', 'video', 'document'] as MemoryCategory[]).map(cat => (
-                  <button
-                    key={cat}
-                    type="button"
-                    onClick={() => setFormData({ ...formData, category: cat })}
-                    className={cn(
-                      "p-2 rounded-xl border transition-all",
-                      formData.category === cat 
-                        ? "bg-emerald-600 border-emerald-600 text-white" 
-                        : "bg-slate-50 border-slate-200 text-slate-400"
-                    )}
-                  >
-                    {cat === 'text' && <FileText className="w-5 h-5" />}
-                    {cat === 'photo' && <ImageIcon className="w-5 h-5" />}
-                    {cat === 'audio' && <Mic className="w-5 h-5" />}
-                    {cat === 'video' && <Video className="w-5 h-5" />}
-                    {cat === 'document' && <Download className="w-5 h-5" />}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
-
-          <div>
-            <div className="flex items-center justify-between mb-1">
-              <label className="block text-sm font-medium text-slate-700">{t.description}</label>
-              <button 
-                type="button"
-                onClick={handleVoiceInput}
-                className={cn(
-                  "flex items-center gap-2 text-xs font-bold px-3 py-1 rounded-full transition-all",
-                  isRecording ? "bg-red-100 text-red-600 animate-pulse" : "bg-emerald-100 text-emerald-600"
-                )}
-              >
-                <Mic className="w-3 h-3" /> {isRecording ? "Recording..." : t.voiceInput}
-              </button>
-            </div>
-            <textarea 
-              required
-              value={formData.description || ''} 
-              onChange={e => setFormData({ ...formData, description: e.target.value })}
-              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2 text-slate-900 min-h-[150px]"
-              placeholder="Tell your story here..."
-            />
-          </div>
-
-          {formData.category !== 'text' && (
-            <div className="space-y-2">
-              <label className="block text-sm font-medium text-slate-700">Upload {formData.category}</label>
-              <div className="flex items-center justify-center w-full">
-                <label className="flex flex-col items-center justify-center w-full h-32 border-2 border-slate-200 border-dashed rounded-2xl cursor-pointer bg-slate-50 hover:bg-slate-100 transition-all">
-                  <div className="flex flex-col items-center justify-center pt-5 pb-6">
-                    <Download className="w-8 h-8 text-slate-400 mb-2" />
-                    <p className="text-sm text-slate-500">
-                      {file ? file.name : `Click to upload ${formData.category}`}
-                    </p>
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+        {capsules.map((c) => {
+          const locked = isLocked(c.openingDate);
+          return (
+            <Card key={c.id} className={cn("p-10 space-y-6 flex flex-col items-start transition-all group overflow-hidden relative", locked ? "bg-slate-50 grayscale-[0.5]" : "bg-white border-emerald-100")}>
+               <div className={cn("w-16 h-16 rounded-3xl flex items-center justify-center border shadow-sm transition-transform group-hover:scale-110", locked ? "bg-slate-100 border-slate-200 text-slate-400" : "bg-emerald-50 border-emerald-100 text-emerald-600")}>
+                  {locked ? <Clock3 className="w-8 h-8" /> : <Package className="w-8 h-8" />}
+               </div>
+               <div className="space-y-4 flex-1 w-full">
+                  <div>
+                    <h3 className="text-2xl font-black font-serif text-slate-900 mb-1">{c.title}</h3>
+                    <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-slate-400">
+                      <UserIcon className="w-3 h-3" /> {c.createdBy}
+                    </div>
                   </div>
-                  <input type="file" className="hidden" onChange={handleFileChange} accept={
-                    formData.category === 'photo' ? 'image/*' :
-                    formData.category === 'video' ? 'video/*' :
-                    formData.category === 'audio' ? 'audio/*' :
-                    '*'
-                  } />
-                </label>
-              </div>
-              {!isPremium && (
-                <p className="text-[10px] text-slate-400 italic">
-                  {t.storageLimit}: 50MB (Free Version)
-                </p>
-              )}
-            </div>
-          )}
+                  
+                  <div className={cn("inline-block px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest", locked ? "bg-amber-50 text-amber-600 border border-amber-100" : "bg-emerald-50 text-emerald-600 border border-emerald-100")}>
+                    {locked ? `Opens: ${format(new Date(c.openingDate), 'PP')}` : "Available Now"}
+                  </div>
 
-          <div className="p-4 bg-emerald-50 rounded-2xl border border-emerald-100">
-            <h4 className="text-sm font-bold text-emerald-700 mb-2 flex items-center gap-2">
-              <MessageSquare className="w-4 h-4" /> {t.prompts}
-            </h4>
-            <div className="flex flex-wrap gap-2">
-              {prompts.map((p, i) => (
-                <div key={i} className="flex flex-col gap-1">
-                  <button
-                    key={i}
-                    type="button"
-                    onClick={() => setFormData(prev => ({ ...prev, description: (prev.description || '') + ' ' + p.text }))}
-                    className="text-xs bg-white px-3 py-1.5 rounded-full border border-emerald-200 text-slate-600 hover:bg-emerald-100 transition-colors"
-                  >
-                    {p.text}
-                  </button>
-                  {!isPremium && p.sponsored && (
-                    <span className="text-[8px] text-slate-400 text-center uppercase tracking-tighter">
-                      {t.sponsoredBy} {p.sponsor}
-                    </span>
+                  <p className="text-slate-500 text-sm leading-relaxed italic">
+                    {locked ? "The contents of this capsule are currently sealed until the appointed time." : c.description}
+                  </p>
+
+                  {!locked && c.fileUrl && (
+                    <div className="pt-2">
+                       <a href={c.fileUrl} download={c.title} className="text-emerald-600 text-xs font-black uppercase tracking-widest flex items-center gap-2 hover:underline">
+                         <Download className="w-4 h-4" /> Download Attached File
+                       </a>
+                    </div>
                   )}
-                </div>
-              ))}
-            </div>
-          </div>
+               </div>
+               <div className="flex gap-2 w-full pt-4">
+                 <Button variant="secondary" className="flex-1 py-4 !rounded-2xl" onClick={() => shareCapsule(c)} icon={Share2}>Share</Button>
+                 <button onClick={async () => { if(confirm('Delete this capsule?')) await deleteDoc(doc(db, 'time_capsules', c.id)) }} className="p-4 bg-red-50 text-red-400 rounded-2xl hover:bg-red-100 transition-colors">
+                   <Trash2 className="w-5 h-5" />
+                 </button>
+               </div>
+               
+               {locked && (
+                 <div className="absolute top-4 right-4 animate-pulse">
+                   <Shield className="w-6 h-6 text-slate-300" />
+                 </div>
+               )}
+            </Card>
+          );
+        })}
+      </div>
 
-          <button 
-            type="submit"
-            className="w-full py-4 bg-emerald-600 hover:bg-emerald-700 text-white rounded-2xl font-bold text-lg shadow-lg shadow-emerald-600/20 transition-all"
-          >
-            {t.save}
-          </button>
+      <Modal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} title="Create Time Capsule">
+        <form onSubmit={handleSave} className="space-y-6">
+           <div className="space-y-2">
+             <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 pl-2">Capsule Title</label>
+             <input required className="w-full bg-slate-50 border border-slate-100 rounded-3xl p-5 font-bold outline-none" value={formData.title} onChange={e => setFormData({...formData, title: e.target.value})} placeholder="e.g. My message to my future kids" />
+           </div>
+           <div className="grid grid-cols-2 gap-4">
+             <div className="space-y-2">
+               <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 pl-2">Created By</label>
+               <input required className="w-full bg-slate-50 border border-slate-100 rounded-3xl p-5 font-bold outline-none" value={formData.createdBy} onChange={e => setFormData({...formData, createdBy: e.target.value})} />
+             </div>
+             <div className="space-y-2">
+               <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 pl-2">Opening Date & Time</label>
+               <input type="datetime-local" required className="w-full bg-slate-50 border border-slate-100 rounded-3xl p-5 font-bold outline-none" value={formData.openingDate} onChange={e => setFormData({...formData, openingDate: e.target.value})} />
+             </div>
+           </div>
+           <div className="space-y-2">
+             <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 pl-2">Message Description</label>
+             <textarea required className="w-full bg-slate-50 border border-slate-100 rounded-3xl p-5 font-bold min-h-[120px] outline-none" value={formData.description} onChange={e => setFormData({...formData, description: e.target.value})} placeholder="Write the heart of your message here..." />
+           </div>
+           <div className="space-y-4">
+              <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 pl-2">Upload Files (Photos, Docs, etc.)</label>
+              <div 
+                onClick={() => fileInputRef.current?.click()}
+                className="w-full h-32 border-2 border-dashed border-slate-200 rounded-3xl flex flex-col items-center justify-center gap-2 cursor-pointer hover:border-emerald-400 transition-all bg-slate-50/50"
+              >
+                {formData.fileUrl ? (
+                  <div className="text-emerald-600 font-bold flex items-center gap-2"><Check className="w-6 h-6" /> File Attached</div>
+                ) : (
+                  <div className="text-slate-400 font-bold flex flex-col items-center gap-1">
+                    <Plus className="w-8 h-8 opacity-40" />
+                    <span className="text-xs">Drag and drop or click to upload</span>
+                  </div>
+                )}
+              </div>
+              <input type="file" ref={fileInputRef} className="hidden" onChange={handleFileChange} />
+           </div>
+           <Button className="w-full py-6 rounded-3xl shadow-xl shadow-emerald-900/10" icon={Hourglass}>Seal Capsule</Button>
         </form>
-      </div>
-    </div>
-  );
-}
-
-function MemoriesView({ t, memories, setMemories, members, isPremium }: { t: any, memories: Memory[], setMemories: React.Dispatch<React.SetStateAction<Memory[]>>, members: FamilyMember[], isPremium: boolean }) {
-  const [filter, setFilter] = useState<MemoryCategory | 'all'>('all');
-  const [searchTerm, setSearchTerm] = useState('');
-  const [selectedPerson, setSelectedPerson] = useState('all');
-  const [showExportSponsor, setShowExportSponsor] = useState(false);
-
-  const filteredMemories = memories.filter(m => {
-    const matchesCategory = filter === 'all' || m.category === filter;
-    const matchesSearch = m.title.toLowerCase().includes(searchTerm.toLowerCase()) || m.description.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesPerson = selectedPerson === 'all' || m.personId === selectedPerson;
-    return matchesCategory && matchesSearch && matchesPerson;
-  });
-
-  const exportToWord = async () => {
-    const doc = new Document({
-      sections: [{
-        properties: {},
-        children: [
-          new Paragraph({
-            text: "Family Shaastra - Memories Archive",
-            heading: HeadingLevel.HEADING_1,
-          }),
-          ...filteredMemories.flatMap(m => [
-            new Paragraph({
-              text: m.title,
-              heading: HeadingLevel.HEADING_2,
-              spacing: { before: 400 },
-            }),
-            new Paragraph({
-              children: [
-                new TextRun({ text: `Date: ${m.date}`, bold: true }),
-                new TextRun({ text: ` | Author: ${m.author}`, bold: true }),
-              ],
-            }),
-            new Paragraph({
-              text: m.description,
-              spacing: { after: 200 },
-            }),
-          ]),
-        ],
-      }],
-    });
-
-    const blob = await Packer.toBlob(doc);
-    saveAs(blob, "Family_Memories.docx");
-    if (!isPremium) setShowExportSponsor(true);
-  };
-
-  return (
-    <div className="space-y-8">
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <h2 className="text-3xl font-bold text-slate-900">{t.memories}</h2>
-        <div className="flex items-center gap-2">
-          <button 
-            onClick={exportToWord}
-            className="px-4 py-2 bg-slate-100 text-slate-600 rounded-xl text-sm font-bold flex items-center gap-2 hover:bg-slate-200 transition-all"
-          >
-            <Download className="w-4 h-4" /> {t.exportWord}
-          </button>
-        </div>
-      </div>
-
-      <Modal isOpen={showExportSponsor} onClose={() => setShowExportSponsor(false)} title={t.sponsored}>
-        <div className="text-center space-y-4">
-          <div className="w-16 h-16 bg-emerald-50 rounded-2xl flex items-center justify-center mx-auto">
-            <Heart className="w-8 h-8 text-emerald-600" />
-          </div>
-          <p className="text-slate-600">This memory book export was made possible by <strong>FamilyLegacy Prints</strong>. Get 20% off your first physical photo book with code FAMILY20.</p>
-          <button 
-            onClick={() => setShowExportSponsor(false)}
-            className="w-full py-3 bg-emerald-600 text-white rounded-xl font-bold"
-          >
-            Continue
-          </button>
-        </div>
       </Modal>
-
-      <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-sm space-y-4">
-        <div className="flex flex-wrap gap-4">
-          <div className="flex-1 min-w-[200px]">
-            <input 
-              type="text" 
-              placeholder="Search memories..."
-              value={searchTerm}
-              onChange={e => setSearchTerm(e.target.value)}
-              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2 text-sm"
-            />
-          </div>
-          <select 
-            value={selectedPerson}
-            onChange={e => setSelectedPerson(e.target.value)}
-            className="bg-slate-50 border border-slate-200 rounded-xl px-4 py-2 text-sm"
-          >
-            <option value="all">All People</option>
-            {members.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
-          </select>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          {['all', 'text', 'photo', 'audio', 'video', 'document'].map(cat => (
-            <button
-              key={cat}
-              onClick={() => setFilter(cat as any)}
-              className={cn(
-                "px-4 py-2 rounded-full text-xs font-bold transition-all border",
-                filter === cat 
-                  ? "bg-emerald-600 border-emerald-600 text-white" 
-                  : "bg-white border-slate-200 text-slate-500 hover:border-emerald-500"
-              )}
-            >
-              {cat.toUpperCase()}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {filteredMemories.map((memory) => (
-          <motion.div 
-            layout
-            key={memory.id} 
-            className="bg-white border border-slate-200 rounded-3xl overflow-hidden group hover:shadow-xl transition-all"
-          >
-            <div className="aspect-video bg-slate-100 flex items-center justify-center relative overflow-hidden">
-              {memory.imageUrl ? (
-                <img 
-                  src={memory.imageUrl} 
-                  alt={memory.title} 
-                  className="w-full h-full object-cover"
-                  referrerPolicy="no-referrer"
-                />
-              ) : (
-                <>
-                  {memory.category === 'photo' && <ImageIcon className="w-12 h-12 text-emerald-500/50" />}
-                  {memory.category === 'video' && <Video className="w-12 h-12 text-blue-500/50" />}
-                  {memory.category === 'audio' && <Mic className="w-12 h-12 text-purple-500/50" />}
-                  {memory.category === 'text' && <FileText className="w-12 h-12 text-slate-500/50" />}
-                  {memory.category === 'document' && <Download className="w-12 h-12 text-orange-500/50" />}
-                </>
-              )}
-              
-              <div className="absolute top-4 right-4 px-3 py-1 bg-black/50 backdrop-blur-md text-white text-xs rounded-full">
-                {memory.date}
-              </div>
-            </div>
-            <div className="p-6 space-y-3">
-              <div className="flex items-center justify-between">
-                <h3 className="text-xl font-bold text-slate-900">{memory.title}</h3>
-                <span className="px-2 py-0.5 bg-slate-100 text-[10px] font-bold rounded-full uppercase text-slate-500">
-                  {memory.category}
-                </span>
-              </div>
-              <p className="text-slate-600 text-sm line-clamp-3">{memory.description}</p>
-              <div className="pt-4 flex items-center justify-between border-t border-slate-100">
-                <span className="text-xs font-medium text-slate-400">By {memory.author}</span>
-                <button className="text-emerald-600 text-sm font-bold flex items-center gap-1">
-                  View <ChevronRight className="w-4 h-4" />
-                </button>
-              </div>
-            </div>
-          </motion.div>
-        ))}
-      </div>
     </div>
   );
 }
 
-function NotificationsView({ t, notifications, setNotifications }: { t: any, notifications: AppNotification[], setNotifications: React.Dispatch<React.SetStateAction<AppNotification[]>> }) {
-  const markAsRead = (id: string) => {
-    setNotifications(prev => prev.map(n => n.id === id ? { ...n, read: true } : n));
-  };
-
-  const deleteNotification = (id: string) => {
-    setNotifications(prev => prev.filter(n => n.id !== id));
-  };
-
-  return (
-    <div className="max-w-2xl mx-auto space-y-8">
-      <h2 className="text-3xl font-bold text-slate-900">{t.notifications}</h2>
-      
-      <div className="space-y-4">
-        {notifications.length === 0 ? (
-          <div className="text-center py-12 text-slate-500">No new notifications</div>
-        ) : (
-          notifications.map(n => (
-            <div 
-              key={n.id} 
-              className={cn(
-                "p-6 rounded-3xl border transition-all flex items-start gap-4",
-                n.read 
-                  ? "bg-white border-slate-200" 
-                  : "bg-emerald-50 border-emerald-100 shadow-sm"
-              )}
-            >
-              <div className={cn(
-                "w-10 h-10 rounded-xl flex items-center justify-center shrink-0",
-                n.type === 'milestone' ? "bg-emerald-100 text-emerald-600" : 
-                n.type === 'invitation' ? "bg-blue-100 text-blue-600" : "bg-slate-100 text-slate-600"
-              )}>
-                {n.type === 'milestone' && <Clock className="w-5 h-5" />}
-                {n.type === 'invitation' && <UserPlus className="w-5 h-5" />}
-                {n.type === 'update' && <Bell className="w-5 h-5" />}
-              </div>
-              <div className="flex-1 space-y-1">
-                <div className="flex items-center justify-between">
-                  <h4 className="font-bold text-slate-900">{n.title}</h4>
-                  <span className="text-[10px] text-slate-400">{n.date}</span>
-                </div>
-                <p className="text-sm text-slate-600">{n.message}</p>
-                <div className="pt-2 flex gap-2">
-                  {!n.read && (
-                    <button onClick={() => markAsRead(n.id)} className="text-xs font-bold text-emerald-600">Mark as read</button>
-                  )}
-                  <button onClick={() => deleteNotification(n.id)} className="text-xs font-bold text-red-500">Delete</button>
-                </div>
-              </div>
-            </div>
-          ))
-        )}
-      </div>
-    </div>
-  );
-}
-
-function FamilyTreeView({ t, members, setMembers }: { t: any, members: FamilyMember[], setMembers: React.Dispatch<React.SetStateAction<FamilyMember[]>> }) {
+function EventPlannerView({ t, user }: any) {
+  const [events, setEvents] = useState<any[]>([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [editingMember, setEditingMember] = useState<FamilyMember | null>(null);
-  const [formData, setFormData] = useState<Partial<FamilyMember>>({});
+  const [editingEvent, setEditingEvent] = useState<any>(null);
+  const [formData, setFormData] = useState({ title: '', date: '', location: '', description: '', status: 'planning', organizer: user.displayName || '' });
 
-  const exportToWord = async () => {
-    const doc = new Document({
-      sections: [{
-        properties: {},
-        children: [
-          new Paragraph({
-            text: "Family Shaastra - Family Tree",
-            heading: HeadingLevel.HEADING_1,
-          }),
-          ...members.map(m => (
-            new Paragraph({
-              children: [
-                new TextRun({ text: `${m.name}`, bold: true }),
-                new TextRun({ text: ` (${m.relation})` }),
-                m.birthDate ? new TextRun({ text: ` - Born: ${m.birthDate}` }) : new TextRun({ text: "" }),
-              ],
-              spacing: { before: 200 },
-            })
-          )),
-        ],
-      }],
+  useEffect(() => {
+    const q = query(collection(db, 'events'), where('userId', '==', user.uid), orderBy('date', 'asc'));
+    return onSnapshot(q, (snapshot) => {
+      setEvents(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    }, (err) => {
+      handleFirestoreError(err, OperationType.LIST, 'events');
     });
+  }, [user.uid]);
 
-    const blob = await Packer.toBlob(doc);
-    saveAs(blob, "Family_Tree.docx");
-  };
-
-  const handleAdd = () => {
-    setEditingMember(null);
-    setFormData({});
-    setIsModalOpen(true);
-  };
-
-  const handleEdit = (member: FamilyMember) => {
-    setEditingMember(member);
-    setFormData(member);
-    setIsModalOpen(true);
-  };
-
-  const handleDelete = (id: string) => {
-    setMembers(prev => prev.filter(m => m.id !== id));
-  };
-
-  const handleSave = (e: React.FormEvent) => {
+  const handleSave = async (e: any) => {
     e.preventDefault();
-    if (editingMember) {
-      setMembers(prev => prev.map(m => m.id === editingMember.id ? { ...m, ...formData } as FamilyMember : m));
-    } else {
-      const newMember: FamilyMember = {
-        ...formData,
-        id: Math.random().toString(36).substr(2, 9),
-      } as FamilyMember;
-      setMembers(prev => [...prev, newMember]);
+    try {
+      if (editingEvent) {
+        await updateDoc(doc(db, 'events', editingEvent.id), { ...formData, updatedAt: new Date().toISOString() });
+      } else {
+        await addDoc(collection(db, 'events'), { ...formData, userId: user.uid, createdAt: new Date().toISOString() });
+      }
+      resetForm();
+    } catch (err) {
+      handleFirestoreError(err, OperationType.WRITE, 'events');
     }
+  };
+
+  const resetForm = () => {
+    setFormData({ title: '', date: '', location: '', description: '', status: 'planning', organizer: user.displayName || '' });
+    setEditingEvent(null);
     setIsModalOpen(false);
   };
 
-  const renderTree = (parentId: string | null = null, level: number = 0) => {
-    const children = members.filter(m => m.parentId === (parentId || undefined) || (!parentId && !m.parentId));
-    
-    if (children.length === 0) return null;
+  const handleShare = (ev: any) => {
+    const text = `📅 *Family Event: ${ev.title}*\n\nStatus: ${ev.status.toUpperCase()}\nDate: ${format(new Date(ev.date), 'PPP p')}\nLocation: ${ev.location}\nOrganizer: ${ev.organizer}\n\nDescription: ${ev.description}\n\nShared via Family Shaastra.`;
+    const url = `https://wa.me/?text=${encodeURIComponent(text)}`;
+    window.open(url, '_blank');
+  };
+
+  const deleteEvent = async (id: string) => {
+    if (confirm('Permanently cancel and delete this event?')) await deleteDoc(doc(db, 'events', id));
+  };
+
+  return (
+    <div className="space-y-12">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 px-2">
+        <div className="space-y-2">
+           <h2 className="text-4xl font-black font-serif text-slate-900 flex items-center gap-3">
+             <CalendarDays className="w-10 h-10 text-emerald-600" /> Event Planner
+           </h2>
+           <p className="text-slate-500 max-w-xl">Professional coordination for family reunions, weddings, and milestones. Plan, execute, and share with precision.</p>
+        </div>
+        <Button onClick={() => setIsModalOpen(true)} icon={PlusCircle}>New Event</Button>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-10">
+        <div className="space-y-6">
+           <h3 className="text-xs font-black uppercase tracking-[0.3em] text-slate-400 pl-4 border-l-4 border-emerald-500">Upcoming Lineup</h3>
+           <div className="space-y-4">
+              {events.map((ev) => (
+                <Card key={ev.id} className="p-8 flex flex-col md:flex-row gap-6 group hover:border-emerald-200 transition-all">
+                   <div className="w-24 h-24 bg-slate-50 rounded-3xl flex flex-col items-center justify-center border border-slate-100 shrink-0">
+                      <span className="text-[10px] font-black text-emerald-600 uppercase mb-1">{format(new Date(ev.date), 'MMM')}</span>
+                      <span className="text-3xl font-black text-slate-900">{format(new Date(ev.date), 'dd')}</span>
+                   </div>
+                   <div className="flex-1 space-y-3">
+                      <div className="flex items-start justify-between">
+                         <div>
+                            <h4 className="text-xl font-bold text-slate-900">{ev.title}</h4>
+                            <div className="flex items-center gap-3 mt-1">
+                               <div className="flex items-center gap-1.5 text-xs font-medium text-slate-400">
+                                 <MapPin className="w-3 h-3 text-emerald-500" /> {ev.location}
+                               </div>
+                               <div className="flex items-center gap-1.5 text-xs font-medium text-slate-400">
+                                 <Clock3 className="w-3 h-3 text-amber-500" /> {format(new Date(ev.date), 'p')}
+                               </div>
+                            </div>
+                         </div>
+                         <div className={cn(
+                           "px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest",
+                           ev.status === 'planning' ? "bg-blue-50 text-blue-600" :
+                           ev.status === 'confirmed' ? "bg-emerald-50 text-emerald-600" :
+                           ev.status === 'executed' ? "bg-slate-50 text-slate-600" : "bg-red-50 text-red-600"
+                         )}>
+                           {ev.status}
+                         </div>
+                      </div>
+                      <p className="text-slate-500 text-sm line-clamp-2 leading-relaxed">{ev.description}</p>
+                      <div className="flex flex-wrap items-center gap-3 pt-2">
+                         {ev.status !== 'executed' && (
+                           <button onClick={async () => await updateDoc(doc(db, 'events', ev.id), { status: 'executed' })} className="px-4 py-2.5 bg-slate-900 text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-emerald-600 transition-all flex items-center gap-2">
+                             <Check className="w-4 h-4" /> Execute
+                           </button>
+                         )}
+                         <button onClick={() => { setEditingEvent(ev); setFormData({...ev}); setIsModalOpen(true); }} className="p-2.5 bg-white border border-slate-100 rounded-xl text-slate-400 hover:text-emerald-600 transition-all" title="Edit Event"><Edit2 className="w-4 h-4" /></button>
+                         <button onClick={() => deleteEvent(ev.id)} className="p-2.5 bg-white border border-slate-100 rounded-xl text-slate-400 hover:text-red-600 transition-all" title="Delete Event"><Trash2 className="w-4 h-4" /></button>
+                         <button onClick={() => handleShare(ev)} className="px-4 py-2.5 bg-emerald-50 text-emerald-600 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-emerald-100 transition-all flex items-center gap-2">
+                           <Share2 className="w-4 h-4" /> Share Lineup
+                         </button>
+                      </div>
+                   </div>
+                </Card>
+              ))}
+              {events.length === 0 && (
+                <div className="py-20 text-center bg-slate-50/50 rounded-[3rem] border-2 border-dashed border-slate-100">
+                   <CalendarDays className="w-16 h-16 text-slate-200 mx-auto mb-4" />
+                   <p className="text-slate-400 font-bold">No events scheduled. Start planning your family reunion!</p>
+                </div>
+              )}
+           </div>
+        </div>
+
+        <Card className="p-10 space-y-8 h-fit sticky top-24">
+           <h3 className="text-2xl font-black font-serif text-slate-900 leading-tight">Master Planning <br/><span className="text-emerald-600">Workspace</span></h3>
+           <div className="space-y-6">
+              <div className="flex items-start gap-4">
+                 <div className="w-10 h-10 bg-emerald-50 rounded-xl flex items-center justify-center shrink-0"><Check className="w-5 h-5 text-emerald-600" /></div>
+                 <div>
+                    <h5 className="font-bold text-slate-900">Define Scope</h5>
+                    <p className="text-xs text-slate-500">Add titles, dates, and locations for your family to know where to go.</p>
+                 </div>
+              </div>
+              <div className="flex items-start gap-4">
+                 <div className="w-10 h-10 bg-amber-50 rounded-xl flex items-center justify-center shrink-0"><Share2 className="w-5 h-5 text-amber-600" /></div>
+                 <div>
+                    <h5 className="font-bold text-slate-900">Push to WhatsApp</h5>
+                    <p className="text-xs text-slate-500">Every event detail can be instantly shared with family groups.</p>
+                 </div>
+              </div>
+              <div className="flex items-start gap-4">
+                 <div className="w-10 h-10 bg-blue-50 rounded-xl flex items-center justify-center shrink-0"><Hourglass className="w-5 h-5 text-blue-600" /></div>
+                 <div>
+                    <h5 className="font-bold text-slate-900">Track Progress</h5>
+                    <p className="text-xs text-slate-500">Change status from Planning to Confirmed as you book venues.</p>
+                 </div>
+              </div>
+           </div>
+           <div className="p-6 bg-slate-900 rounded-3xl text-white">
+              <p className="text-xs font-medium text-slate-400 mb-2 italic">Pro Tip</p>
+              <p className="text-sm font-bold leading-relaxed">Collaborate by inviting family members as users; they can view the schedule in real-time.</p>
+           </div>
+        </Card>
+      </div>
+
+      <Modal isOpen={isModalOpen} onClose={resetForm} title={editingEvent ? "Edit Family Event" : "Plan New Event"}>
+         <form onSubmit={handleSave} className="space-y-6">
+            <div className="space-y-2">
+               <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 pl-2">Event Title</label>
+               <input required className="w-full bg-slate-50 border border-slate-100 rounded-3xl p-5 font-bold outline-none" value={formData.title} onChange={e => setFormData({...formData, title: e.target.value})} placeholder="e.g. 50th Wedding Anniversary" />
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+               <div className="space-y-2">
+                  <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 pl-2">Date & Time</label>
+                  <input type="datetime-local" required className="w-full bg-slate-50 border border-slate-100 rounded-3xl p-5 font-bold outline-none" value={formData.date} onChange={e => setFormData({...formData, date: e.target.value})} />
+               </div>
+               <div className="space-y-2">
+                  <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 pl-2">Organizer</label>
+                  <input required className="w-full bg-slate-50 border border-slate-100 rounded-3xl p-5 font-bold outline-none" value={formData.organizer} onChange={e => setFormData({...formData, organizer: e.target.value})} />
+               </div>
+            </div>
+            <div className="space-y-2">
+               <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 pl-2">Location / Venue</label>
+               <input required className="w-full bg-slate-50 border border-slate-100 rounded-3xl p-5 font-bold outline-none" value={formData.location} onChange={e => setFormData({...formData, location: e.target.value})} placeholder="e.g. Grand Heritage Hall" />
+            </div>
+            <div className="space-y-2">
+               <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 pl-2">Details / Itinerary</label>
+               <textarea required className="w-full bg-slate-50 border border-slate-100 rounded-3xl p-5 font-bold min-h-[120px] outline-none" value={formData.description} onChange={e => setFormData({...formData, description: e.target.value})} placeholder="What's happening?" />
+            </div>
+            <div className="space-y-2">
+               <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 pl-2">Current Status</label>
+               <select className="w-full bg-slate-50 border border-slate-100 rounded-3xl p-5 font-bold outline-none" value={formData.status} onChange={e => setFormData({...formData, status: e.target.value})}>
+                  <option value="planning">🏗️ Planning</option>
+                  <option value="confirmed">✅ Confirmed</option>
+                  <option value="executed">🏅 Executed</option>
+                  <option value="cancelled">❌ Cancelled</option>
+               </select>
+            </div>
+            <Button className="w-full py-6 rounded-3xl shadow-xl" icon={CalendarDays}>{editingEvent ? "Update Event" : "Initiate Event"}</Button>
+         </form>
+      </Modal>
+    </div>
+  );
+}
+
+// --- Sub-Views ---
+
+function LoginView({ onLogin, t }: any) {
+  return (
+    <div className="h-screen flex items-center justify-center bg-[#fdfcfb] p-6">
+      <div className="flex flex-col items-center gap-12 max-w-lg w-full">
+         <div className="scale-[2]">
+           <Logo />
+         </div>
+         <div className="text-center space-y-4">
+           <h1 className="text-4xl font-black text-slate-900 font-serif leading-tight">Your Family Legacy Starts Here.</h1>
+           <p className="text-lg text-slate-500">Record, connect, and celebrate your heritage in a secure digital space.</p>
+         </div>
+         <button 
+           onClick={onLogin}
+           className="w-full py-6 px-8 bg-white border border-slate-200 rounded-[2.5rem] shadow-xl hover:shadow-2xl hover:border-emerald-200 transition-all flex items-center justify-center gap-4 group active:scale-95"
+         >
+           <Globe className="w-8 h-8 text-emerald-600 group-hover:rotate-12 transition-transform" />
+           <span className="text-xl font-black text-slate-800">Continue with Google</span>
+         </button>
+         <div className="flex gap-8 text-[10px] font-black text-slate-300 uppercase tracking-widest">
+           <span>Secure</span>
+           <span>Private</span>
+           <span>Generational</span>
+         </div>
+      </div>
+    </div>
+  );
+}
+
+function HomeView({ t, user, navigateTo }: any) {
+  return (
+    <div className="space-y-16">
+      {/* Hero */}
+      <section className="relative overflow-hidden rounded-[3rem] bg-emerald-900 p-10 md:p-16 lg:p-20 text-white flex flex-col md:flex-row items-center gap-8 lg:gap-12 overflow-hidden shadow-2xl shadow-emerald-900/20">
+        <div className="flex-1 space-y-5 lg:space-y-6 z-10">
+          <motion.div
+            initial={{ opacity: 0, x: -20 }}
+            animate={{ opacity: 1, x: 0 }}
+            className="inline-block px-4 py-1.5 bg-emerald-800 rounded-full text-[10px] font-black uppercase tracking-widest text-emerald-300 border border-emerald-700"
+          >
+            A Digital Family Sanctuary
+          </motion.div>
+          <h1 className="text-3xl md:text-4xl lg:text-5xl font-black font-serif leading-tight">{t.welcome}, {user.displayName.split(' ')[0]}</h1>
+          <div className="space-y-4 max-w-xl">
+            <p className="text-lg text-emerald-50 font-black font-serif italic">"Family in an app."</p>
+            <div className="space-y-2 text-emerald-100/70 text-xs font-medium leading-relaxed">
+              <p>• Connect with your ancestors. Collaborate with siblings.</p>
+              <p>• Record your legacy in a secure digital vault.</p>
+              <p>• Build a beautiful, interactive family record.</p>
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-4 pt-4">
+            <Button variant="accent" className="px-8 py-4 rounded-2xl text-base shadow-lg" onClick={() => navigateTo('tree')} icon={Users}>Family Tree</Button>
+            <Button variant="secondary" className="px-8 py-4 rounded-2xl text-base bg-emerald-800 border-none text-white hover:bg-emerald-700 shadow-lg" onClick={() => navigateTo('memories')} icon={ImageIcon}>Record Memory</Button>
+          </div>
+        </div>
+        
+        {/* Fun Interactive Animation */}
+        <div className="w-full md:w-1/3 aspect-square relative flex items-center justify-center p-2">
+            <div className="absolute inset-0 bg-emerald-800/40 rounded-full blur-[60px] animate-pulse" />
+            <motion.div
+               animate={{ y: [0, -8, 0], rotate: [0, 0.5, -0.5, 0] }}
+               transition={{ duration: 10, repeat: Infinity, ease: 'easeInOut' }}
+               className="relative z-10 w-full max-w-[240px] aspect-square bg-white/10 backdrop-blur-xl rounded-[2.5rem] border border-white/20 shadow-2xl flex items-center justify-center group"
+            >
+               <div className="relative">
+                 <Heart className="w-24 h-24 text-amber-400 fill-amber-400 group-hover:scale-105 transition-transform duration-500" />
+                 <motion.div 
+                   animate={{ scale: [1, 1.15, 1], opacity: [1, 0.8, 1] }}
+                   transition={{ duration: 2, repeat: Infinity }}
+                   className="absolute inset-0 bg-amber-400 blur-2xl opacity-20"
+                 />
+               </div>
+
+               {/* Orbital Icons */}
+               <motion.div 
+                 animate={{ rotate: 360 }}
+                 transition={{ duration: 20, repeat: Infinity, ease: 'linear' }}
+                 className="absolute inset-0 pointer-events-none"
+               >
+                  <div className="absolute top-0 left-1/2 -translate-x-1/2 -translate-y-1/2 w-14 h-14 bg-white rounded-full flex items-center justify-center shadow-lg border border-slate-100">
+                    <ImageIcon className="w-7 h-7 text-emerald-600" />
+                  </div>
+                  <div className="absolute bottom-0 left-1/2 -translate-x-1/2 translate-y-1/2 w-14 h-14 bg-white rounded-full flex items-center justify-center shadow-lg border border-slate-100">
+                    <Users className="w-7 h-7 text-teal-600" />
+                  </div>
+                  <div className="absolute left-0 top-1/2 -translate-x-1/2 -translate-y-1/2 w-14 h-14 bg-white rounded-full flex items-center justify-center shadow-lg border border-slate-100">
+                    <Mic className="w-7 h-7 text-amber-600" />
+                  </div>
+               </motion.div>
+            </motion.div>
+        </div>
+      </section>
+
+      {/* Quick Links / Guide/Disclaimer */}
+      <section className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+         <Card className="p-10 space-y-4 hover:border-emerald-300 transition-colors">
+            <div className="w-16 h-16 bg-slate-50 rounded-3xl flex items-center justify-center">
+                 <Info className="w-8 h-8 text-emerald-600" />
+            </div>
+            <h3 className="text-2xl font-black font-serif uppercase tracking-tight">{t.guide}</h3>
+            <p className="text-slate-500 leading-relaxed">New here? Learn how to invite family members, record multi-generational memories, and build a beautiful tree legacy.</p>
+            <button onClick={() => navigateTo('guide')} className="text-emerald-600 font-black text-sm uppercase tracking-widest flex items-center gap-2 pt-4 hover:translate-x-2 transition-transform">
+              Open the Guide <ChevronRight className="w-4 h-4" />
+            </button>
+         </Card>
+         <Card className="p-10 space-y-4 hover:border-amber-300 transition-colors">
+            <div className="w-16 h-16 bg-slate-50 rounded-3xl flex items-center justify-center">
+                 <Shield className="w-8 h-8 text-amber-500" />
+            </div>
+            <h3 className="text-2xl font-black font-serif uppercase tracking-tight">{t.disclaimer}</h3>
+            <p className="text-slate-500 leading-relaxed">Your family data is sacred. Read our transparency pledge regarding your digital heritage and privacy.</p>
+            <button onClick={() => navigateTo('disclaimer')} className="text-amber-600 font-black text-sm uppercase tracking-widest flex items-center gap-2 pt-4 hover:translate-x-2 transition-transform">
+              Legal Info <ChevronRight className="w-4 h-4" />
+            </button>
+         </Card>
+         <Card className="p-10 space-y-4 bg-slate-900 text-white relative overflow-hidden">
+            <div className="w-16 h-16 bg-white/10 rounded-3xl flex items-center justify-center backdrop-blur-sm">
+                 <CalendarDays className="w-8 h-8 text-white" />
+            </div>
+            <h3 className="text-2xl font-black font-serif uppercase tracking-tight">Family Events</h3>
+            <p className="text-slate-400 leading-relaxed text-sm">Organize reunions, birthdays, and milestones with our professional event planner.</p>
+            <Button variant="accent" className="w-full mt-4 !rounded-2xl" onClick={() => navigateTo('events')}>Plan Now</Button>
+            <div className="absolute -bottom-6 -right-6 w-32 h-32 bg-white/5 blur-2xl rounded-full" />
+         </Card>
+         <Card className="p-10 space-y-4 bg-emerald-700 text-white relative overflow-hidden">
+            <div className="w-16 h-16 bg-white/10 rounded-3xl flex items-center justify-center backdrop-blur-sm">
+                 <Hourglass className="w-8 h-8 text-white" />
+            </div>
+            <h3 className="text-2xl font-black font-serif uppercase tracking-tight">Future Legacy</h3>
+            <p className="text-emerald-100/70 leading-relaxed text-sm">Seal a digital time capsule today, for your family to discover in the years to come.</p>
+            <Button variant="secondary" className="w-full mt-4 !rounded-2xl bg-white/20 border-none text-white hover:bg-white/30" onClick={() => navigateTo('capsule')}>Seal Capsule</Button>
+         </Card>
+      </section>
+    </div>
+  );
+}
+
+function FamilyTreeView({ t, members, setMembers, user }: any) {
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [formData, setFormData] = useState<any>({ name: '', relation: '', description: '', photoUrl: '', parentId: '', connectionType: 'child' });
+  const [editingMember, setEditingMember] = useState<any>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setFormData({ ...formData, photoUrl: reader.result as string });
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const handleSaveMember = async (e: any) => {
+    e.preventDefault();
+    let finalParentId = formData.parentId;
+
+    if (formData.parentId && !editingMember) {
+      if (formData.connectionType === 'sibling') {
+        const targetMember = members.find((m: any) => m.id === formData.parentId);
+        finalParentId = targetMember?.parentId || '';
+      } else if (formData.connectionType === 'parent') {
+        const newMemberRef = await addDoc(collection(db, 'family_members'), {
+          ...formData,
+          parentId: '', 
+          userId: user.uid,
+          createdAt: new Date().toISOString()
+        });
+        await updateDoc(doc(db, 'family_members', formData.parentId), {
+          parentId: newMemberRef.id
+        });
+        resetForm();
+        return;
+      }
+    }
+
+    if (editingMember) {
+      await updateDoc(doc(db, 'family_members', editingMember.id), {
+        name: formData.name,
+        relation: formData.relation,
+        description: formData.description,
+        photoUrl: formData.photoUrl,
+        parentId: finalParentId
+      });
+    } else {
+      await addDoc(collection(db, 'family_members'), {
+        ...formData,
+        parentId: finalParentId,
+        userId: user.uid,
+        createdAt: new Date().toISOString()
+      });
+    }
+    resetForm();
+  };
+
+  const resetForm = () => {
+    setFormData({ name: '', relation: '', description: '', photoUrl: '', parentId: '', connectionType: 'child' });
+    setEditingMember(null);
+    setIsModalOpen(false);
+  };
+
+  const startEdit = (member: any) => {
+    setEditingMember(member);
+    setFormData({
+      name: member.name,
+      relation: member.relation,
+      description: member.description || '',
+      photoUrl: member.photoUrl || '',
+      parentId: member.parentId || '',
+      connectionType: 'child'
+    });
+    setIsModalOpen(true);
+  };
+
+  const renderRecursiveTree = (parentId: string | null = null, level = 0) => {
+    const list = members.filter((m: FamilyMember) => m.parentId === parentId || (!parentId && !m.parentId && members.every((prev: FamilyMember) => prev.id !== m.parentId)));
+    const displayList = level === 0 && list.length === 0 ? members.filter((m: any) => !m.parentId) : list;
 
     return (
-      <div className={cn("flex flex-col gap-4", level > 0 ? "ml-8 md:ml-12 border-l-2 border-slate-100 pl-4 md:pl-8 py-2" : "")}>
-        {children.map((member) => (
-          <div key={member.id} className="space-y-4">
-            <div className="group relative flex items-center gap-4">
-              <div className={cn(
-                "flex-1 p-4 bg-white border border-slate-200 rounded-2xl shadow-sm hover:shadow-md transition-all relative z-10 flex items-center gap-4",
-                member.relation.includes('Grand') ? "border-emerald-500/50 ring-1 ring-emerald-500/10" : ""
-              )}>
-                <div className="w-10 h-10 bg-emerald-100 rounded-full flex items-center justify-center shrink-0">
-                  <Users className="w-5 h-5 text-emerald-600" />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <h4 className="font-bold text-slate-900 text-sm truncate">{member.name}</h4>
-                  <p className="text-[10px] text-slate-500 uppercase tracking-wider font-semibold">{member.relation}</p>
-                </div>
-                
-                <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                  <button onClick={() => handleEdit(member)} className="p-1.5 bg-slate-50 hover:bg-emerald-50 rounded-lg text-emerald-600 transition-colors">
-                    <Edit2 className="w-4 h-4" />
-                  </button>
-                  <button onClick={() => handleDelete(member.id)} className="p-1.5 bg-slate-50 hover:bg-red-50 rounded-lg text-red-600 transition-colors">
-                    <Trash2 className="w-4 h-4" />
-                  </button>
+      <div className={cn("flex flex-wrap justify-center gap-8 pt-6", level > 0 ? "relative" : "")}>
+        {displayList.map((member: any) => (
+          <div key={member.id} className="flex flex-col items-center gap-8 group">
+            <motion.div 
+               className="tree-node-enter relative"
+               whileHover={{ y: -3 }}
+            >
+              <div className="w-24 h-24 md:w-32 md:h-32 bg-white rounded-full border-4 border-emerald-100 shadow-lg overflow-hidden p-1 flex items-center justify-center cursor-pointer group-hover:border-emerald-500 transition-all">
+                {member.photoUrl ? (
+                  <img src={member.photoUrl} className="w-full h-full rounded-full object-cover" referrerPolicy="no-referrer" />
+                ) : (
+                  <div className="w-full h-full bg-slate-50 rounded-full flex items-center justify-center">
+                    <Users className="w-8 h-8 text-slate-200" />
+                  </div>
+                )}
+                <div className="absolute inset-0 bg-emerald-600/0 group-hover:bg-emerald-600/40 transition-colors flex items-center justify-center opacity-0 group-hover:opacity-100 gap-2">
+                   <button onClick={() => startEdit(member)} className="p-2 bg-white rounded-full shadow-lg hover:scale-110 transition-transform">
+                     <Edit2 className="w-4 h-4 text-emerald-600" />
+                   </button>
+                   <button onClick={() => {
+                     const text = `🌳 *Family Lineage: ${member.name}*\nRelation: ${member.relation}\nNotes: ${member.description || 'N/A'}\n\nShared via Family Shaastra.`;
+                     window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank');
+                   }} className="p-2 bg-white rounded-full shadow-lg hover:scale-110 transition-transform">
+                     <Share2 className="w-4 h-4 text-emerald-600" />
+                   </button>
                 </div>
               </div>
-            </div>
+              <div className="absolute -bottom-2 left-1/2 -translate-x-1/2 w-40 bg-white border border-slate-100 rounded-xl shadow-md p-2 text-center transition-all group-hover:shadow-lg z-20">
+                <h4 className="font-bold text-slate-900 truncate text-sm">{member.name}</h4>
+                <p className="text-[9px] font-black text-emerald-600 uppercase tracking-widest">{member.relation}</p>
+                {member.description && <p className="hidden group-hover:block text-[8px] text-slate-400 italic mt-0.5">{member.description}</p>}
+              </div>
+              
+              {/* Connector Line */}
+              {members.some((m: any) => m.parentId === member.id) && (
+                <div className="absolute left-1/2 -bottom-8 w-0.5 h-8 bg-emerald-100 -translate-x-1/2 -z-10" />
+              )}
+            </motion.div>
             
-            {/* Render children recursively */}
-            {renderTree(member.id, level + 1)}
+            {/* Render Children */}
+            {renderRecursiveTree(member.id, level + 1)}
           </div>
         ))}
       </div>
@@ -1234,625 +1087,728 @@ function FamilyTreeView({ t, members, setMembers }: { t: any, members: FamilyMem
 
   return (
     <div className="space-y-8">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <h2 className="text-3xl font-bold text-slate-900">{t.familyTree}</h2>
-        <div className="flex items-center gap-3">
-          <button 
-            onClick={exportToWord}
-            className="flex-1 sm:flex-none px-4 py-2 bg-slate-100 text-slate-600 rounded-xl text-sm font-bold flex items-center justify-center gap-2 hover:bg-slate-200 transition-all"
-          >
-            <Download className="w-4 h-4" /> {t.exportWord}
-          </button>
-          <button 
-            onClick={handleAdd}
-            className="flex-1 sm:flex-none px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-sm font-medium flex items-center justify-center gap-2 transition-all"
-          >
-            <Plus className="w-4 h-4" /> {t.add}
-          </button>
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div>
+           <h2 className="text-3xl font-black font-serif text-slate-900">{t.familyTree}</h2>
+           <p className="text-slate-500 text-sm italic">"Family in an app" — Map your roots.</p>
         </div>
-      </div>
-      
-      <div className="bg-white border border-slate-200 rounded-[2.5rem] p-4 md:p-8 shadow-sm min-h-[400px]">
-        {members.length === 0 ? (
-          <div className="h-full flex flex-col items-center justify-center text-slate-400 py-20">
-            <Users className="w-12 h-12 mb-4 opacity-20" />
-            <p>No family members added yet.</p>
-          </div>
-        ) : (
-          renderTree(null)
-        )}
+        <Button onClick={() => setIsModalOpen(true)} icon={PlusCircle} className="py-3 px-6 text-sm">Add Member</Button>
       </div>
 
-      <Modal 
-        isOpen={isModalOpen} 
-        onClose={() => setIsModalOpen(false)} 
-        title={editingMember ? t.edit : t.add}
-      >
-        <form onSubmit={handleSave} className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1">{t.name}</label>
-            <input 
-              required
-              type="text" 
-              value={formData.name || ''} 
-              onChange={e => setFormData({ ...formData, name: e.target.value })}
-              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2 text-slate-900"
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1">{t.relation}</label>
-            <input 
-              required
-              type="text" 
-              value={formData.relation || ''} 
-              onChange={e => setFormData({ ...formData, relation: e.target.value })}
-              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2 text-slate-900"
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1">Parent (Optional)</label>
-            <select 
-              value={formData.parentId || ''} 
-              onChange={e => setFormData({ ...formData, parentId: e.target.value || undefined })}
-              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2 text-slate-900"
-            >
-              <option value="">None (Root)</option>
-              {members.filter(m => m.id !== editingMember?.id).map(m => (
-                <option key={m.id} value={m.id}>{m.name} ({m.relation})</option>
-              ))}
-            </select>
-          </div>
-          <div className="flex gap-3 pt-4">
-            <button 
-              type="button"
-              onClick={() => setIsModalOpen(false)}
-              className="flex-1 px-4 py-2 bg-slate-100 text-slate-600 rounded-xl font-bold"
-            >
-              {t.cancel}
-            </button>
-            <button 
-              type="submit"
-              className="flex-1 px-4 py-2 bg-emerald-600 text-white rounded-xl font-bold"
-            >
-              {t.save}
-            </button>
-          </div>
-        </form>
-      </Modal>
-    </div>
-  );
-}
-
-function TimelineView({ t, events, setEvents }: { t: any, events: TimelineEvent[], setEvents: React.Dispatch<React.SetStateAction<TimelineEvent[]>> }) {
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [editingEvent, setEditingEvent] = useState<TimelineEvent | null>(null);
-  const [formData, setFormData] = useState<Partial<TimelineEvent>>({});
-
-  const exportToWord = async () => {
-    const sortedEvents = [...events].sort((a, b) => a.date.localeCompare(b.date));
-    const doc = new Document({
-      sections: [{
-        properties: {},
-        children: [
-          new Paragraph({
-            text: "Family Shaastra - Timeline",
-            heading: HeadingLevel.HEADING_1,
-          }),
-          ...sortedEvents.flatMap(e => [
-            new Paragraph({
-              text: `${e.date}: ${e.title}`,
-              heading: HeadingLevel.HEADING_2,
-              spacing: { before: 400 },
-            }),
-            new Paragraph({
-              text: e.description,
-              spacing: { after: 200 },
-            }),
-          ]),
-        ],
-      }],
-    });
-
-    const blob = await Packer.toBlob(doc);
-    saveAs(blob, "Family_Timeline.docx");
-  };
-
-  const handleAdd = () => {
-    setEditingEvent(null);
-    setFormData({});
-    setIsModalOpen(true);
-  };
-
-  const handleEdit = (event: TimelineEvent) => {
-    setEditingEvent(event);
-    setFormData(event);
-    setIsModalOpen(true);
-  };
-
-  const handleDelete = (id: string) => {
-    setEvents(prev => prev.filter(e => e.id !== id));
-  };
-
-  const handleSave = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (editingEvent) {
-      setEvents(prev => prev.map(ev => ev.id === editingEvent.id ? { ...ev, ...formData } as TimelineEvent : ev));
-    } else {
-      const newEvent: TimelineEvent = {
-        ...formData,
-        id: Math.random().toString(36).substr(2, 9),
-      } as TimelineEvent;
-      setEvents(prev => [...prev, newEvent]);
-    }
-    setIsModalOpen(false);
-  };
-
-  const sortedEvents = [...events].sort((a, b) => a.date.localeCompare(b.date));
-
-  return (
-    <div className="space-y-8">
-      <div className="flex items-center justify-between">
-        <h2 className="text-3xl font-bold text-slate-900">{t.timeline}</h2>
-        <div className="flex items-center gap-3">
-          <button 
-            onClick={exportToWord}
-            className="px-4 py-2 bg-slate-100 text-slate-600 rounded-xl text-sm font-bold flex items-center gap-2 hover:bg-slate-200 transition-all"
-          >
-            <Download className="w-4 h-4" /> {t.exportWord}
-          </button>
-          <button 
-            onClick={handleAdd}
-            className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-sm font-medium flex items-center gap-2 transition-all"
-          >
-            <Plus className="w-4 h-4" /> {t.add}
-          </button>
-        </div>
-      </div>
-
-      <div className="relative space-y-8 before:absolute before:inset-0 before:ml-5 before:-translate-x-px md:before:mx-auto md:before:translate-x-0 before:h-full before:w-0.5 before:bg-gradient-to-b before:from-transparent before:via-slate-300 before:to-transparent">
-        {sortedEvents.map((event, i) => (
-          <div key={event.id} className={cn(
-            "relative flex items-center justify-between md:justify-normal md:odd:flex-row-reverse group",
-            i % 2 === 0 ? "md:flex-row" : "md:flex-row-reverse"
-          )}>
-            <div className="flex items-center justify-center w-10 h-10 rounded-full border border-white bg-slate-200 text-emerald-600 shadow shrink-0 md:order-1 md:group-odd:-translate-x-1/2 md:group-even:translate-x-1/2">
-              <Calendar className="w-5 h-5" />
+      <div className="pb-10 flex justify-center w-full overflow-hidden">
+        <div className="w-full px-4 py-8">
+          {members.length > 0 ? (
+             <div className="origin-top scale-[0.7] sm:scale-80 md:scale-90 lg:scale-100 transition-transform">
+               {renderRecursiveTree()}
+             </div>
+          ) : (
+            <div className="h-64 flex flex-col items-center justify-center text-slate-300 gap-4">
+               <Users className="w-16 h-16 opacity-20" />
+               <p className="text-lg font-bold">Start your tree.</p>
             </div>
-            <div className="w-[calc(100%-4rem)] md:w-[calc(50%-2.5rem)] p-6 bg-white border border-slate-200 rounded-3xl shadow-sm hover:shadow-md transition-shadow relative">
-              <div className="flex items-center justify-between mb-1">
-                <div className="font-bold text-slate-900">{event.title}</div>
-                <time className="font-mono text-sm font-medium text-emerald-600">{event.date}</time>
-              </div>
-              <div className="text-slate-600 text-sm mb-4">{event.description}</div>
-              <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                <button onClick={() => handleEdit(event)} className="p-2 hover:bg-slate-100 rounded-full text-slate-400 hover:text-emerald-600 transition-colors">
-                  <Edit2 className="w-4 h-4" />
-                </button>
-                <button onClick={() => handleDelete(event.id)} className="p-2 hover:bg-slate-100 rounded-full text-slate-400 hover:text-red-600 transition-colors">
-                  <Trash2 className="w-4 h-4" />
-                </button>
-              </div>
-            </div>
-          </div>
-        ))}
-      </div>
-
-      <Modal 
-        isOpen={isModalOpen} 
-        onClose={() => setIsModalOpen(false)} 
-        title={editingEvent ? t.edit : t.add}
-      >
-        <form onSubmit={handleSave} className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1">{t.title_label}</label>
-            <input 
-              required
-              type="text" 
-              value={formData.title || ''} 
-              onChange={e => setFormData({ ...formData, title: e.target.value })}
-              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2 text-slate-900"
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1">{t.date}</label>
-            <input 
-              required
-              type="text" 
-              placeholder="e.g. 1995"
-              value={formData.date || ''} 
-              onChange={e => setFormData({ ...formData, date: e.target.value })}
-              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2 text-slate-900"
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1">{t.description}</label>
-            <textarea 
-              required
-              value={formData.description || ''} 
-              onChange={e => setFormData({ ...formData, description: e.target.value })}
-              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2 text-slate-900 min-h-[100px]"
-            />
-          </div>
-          <div className="flex gap-3 pt-4">
-            <button 
-              type="button"
-              onClick={() => setIsModalOpen(false)}
-              className="flex-1 px-4 py-2 bg-slate-100 text-slate-600 rounded-xl font-bold"
-            >
-              {t.cancel}
-            </button>
-            <button 
-              type="submit"
-              className="flex-1 px-4 py-2 bg-emerald-600 text-white rounded-xl font-bold"
-            >
-              {t.save}
-            </button>
-          </div>
-        </form>
-      </Modal>
-    </div>
-  );
-}
-
-function SettingsView({ 
-  t, 
-  language, 
-  setLanguage, 
-  members, 
-  setMembers, 
-  invitations, 
-  setInvitations, 
-  notifications, 
-  setNotifications, 
-  emailNotifications, 
-  setEmailNotifications,
-  isPremium,
-  setIsPremium,
-  onLogout 
-}: { 
-  t: any, 
-  language: Language, 
-  setLanguage: (l: Language) => void, 
-  members: FamilyMember[], 
-  setMembers: React.Dispatch<React.SetStateAction<FamilyMember[]>>,
-  invitations: Invitation[],
-  setInvitations: React.Dispatch<React.SetStateAction<Invitation[]>>,
-  notifications: AppNotification[],
-  setNotifications: React.Dispatch<React.SetStateAction<AppNotification[]>>,
-  emailNotifications: boolean,
-  setEmailNotifications: (v: boolean) => void,
-  isPremium: boolean,
-  setIsPremium: (v: boolean) => void,
-  onLogout: () => void 
-}) {
-  const [activeSubTab, setActiveSubTab] = useState<'general' | 'notifications' | 'invitations'>('general');
-  const [showInviteModal, setShowInviteModal] = useState(false);
-  const [inviteEmail, setInviteEmail] = useState('');
-  const [showGuide, setShowGuide] = useState(false);
-  const [showDisclaimer, setShowDisclaimer] = useState(false);
-
-  const handleSendInvite = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!inviteEmail) return;
-    const newInvite: Invitation = {
-      id: Math.random().toString(36).substr(2, 9),
-      email: inviteEmail,
-      status: 'pending',
-      sentDate: new Date().toISOString().split('T')[0]
-    };
-    setInvitations(prev => [newInvite, ...prev]);
-    setInviteEmail('');
-    setShowInviteModal(false);
-  };
-
-  const renderGeneral = () => (
-    <div className="space-y-6">
-      <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-sm space-y-6">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-emerald-50 rounded-xl flex items-center justify-center">
-              <Globe className="w-5 h-5 text-emerald-600" />
-            </div>
-            <div>
-              <h4 className="font-bold text-slate-900">{t.language}</h4>
-              <p className="text-xs text-slate-500">Choose your preferred language</p>
-            </div>
-          </div>
-          <select 
-            value={language}
-            onChange={(e) => setLanguage(e.target.value as Language)}
-            className="bg-slate-50 border border-slate-200 rounded-xl px-4 py-2 text-sm font-medium"
-          >
-            <option value="en">English</option>
-            <option value="hi">हिन्दी</option>
-            <option value="ta">தமிழ்</option>
-          </select>
-        </div>
-
-        <div className="pt-6 border-t border-slate-100 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-emerald-50 rounded-xl flex items-center justify-center">
-              <Star className="w-5 h-5 text-emerald-600" />
-            </div>
-            <div>
-              <h4 className="font-bold text-slate-900">{isPremium ? t.premiumVersion : t.freeVersion}</h4>
-              <p className="text-xs text-slate-500">{isPremium ? t.unlimitedStorage : `${t.storageLimit}: 50MB`}</p>
-            </div>
-          </div>
-          {!isPremium && (
-            <button 
-              onClick={() => setIsPremium(true)}
-              className="px-4 py-2 bg-emerald-600 text-white rounded-xl text-sm font-bold flex items-center gap-2 hover:bg-emerald-700 transition-all"
-            >
-              <Zap className="w-4 h-4" /> {t.upgrade}
-            </button>
           )}
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <button 
-          onClick={() => setShowGuide(true)}
-          className="p-6 bg-white border border-slate-200 rounded-3xl hover:bg-slate-50 transition-all text-left flex items-center gap-4"
-        >
-          <div className="w-12 h-12 bg-blue-50 rounded-2xl flex items-center justify-center">
-            <Info className="w-6 h-6 text-blue-600" />
+      <Modal isOpen={isModalOpen} onClose={resetForm} title={editingMember ? "Edit Family Member" : "Define Family Member"}>
+        <form onSubmit={handleSaveMember} className="space-y-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="space-y-1">
+               <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 pl-2">Member Name</label>
+               <input required className="w-full bg-slate-50 border border-slate-100 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-emerald-500/20 transition-all font-bold text-sm" placeholder="Full Name" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} />
+            </div>
+            <div className="space-y-1">
+               <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 pl-2">Relation Label</label>
+               <input required className="w-full bg-slate-50 border border-slate-100 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-emerald-500/20 transition-all font-bold text-sm" placeholder="e.g. Sister, Father" value={formData.relation} onChange={e => setFormData({...formData, relation: e.target.value})} />
+            </div>
           </div>
-          <div>
-            <h4 className="font-bold text-slate-900">{t.guide}</h4>
-            <p className="text-xs text-slate-500">Learn how to use Family Shaastra</p>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+             <div className="space-y-1">
+                <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 pl-2">Connect To</label>
+                <select className="w-full bg-slate-50 border border-slate-100 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-emerald-500/20 transition-all font-bold text-sm appearance-none" value={formData.parentId} onChange={e => setFormData({...formData, parentId: e.target.value})} >
+                  <option value="">(Root Node)</option>
+                  {members.map((m: FamilyMember) => <option key={m.id} value={m.id}>{m.name}</option>)}
+                </select>
+             </div>
+             <div className="space-y-1">
+                <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 pl-2">Connection Type</label>
+                <select className="w-full bg-slate-50 border border-slate-100 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-emerald-500/20 transition-all font-bold text-sm appearance-none" value={formData.connectionType} onChange={e => setFormData({...formData, connectionType: e.target.value})} >
+                  <option value="child">Child of</option>
+                  <option value="sibling">Sibling of</option>
+                  <option value="parent">Parent of</option>
+                </select>
+             </div>
           </div>
-        </button>
 
-        <button 
-          onClick={() => setShowDisclaimer(true)}
-          className="p-6 bg-white border border-slate-200 rounded-3xl hover:bg-slate-50 transition-all text-left flex items-center gap-4"
-        >
-          <div className="w-12 h-12 bg-orange-50 rounded-2xl flex items-center justify-center">
-            <Shield className="w-6 h-6 text-orange-600" />
+          <div className="space-y-1">
+             <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 pl-2">Short Description</label>
+             <input className="w-full bg-slate-50 border border-slate-100 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-emerald-500/20 transition-all font-bold text-sm" placeholder="A brief legacy note..." value={formData.description} onChange={e => setFormData({...formData, description: e.target.value})} />
           </div>
-          <div>
-            <h4 className="font-bold text-slate-900">{t.disclaimer}</h4>
-            <p className="text-xs text-slate-500">Privacy and legal information</p>
-          </div>
-        </button>
-      </div>
 
-      <button 
-        onClick={onLogout}
-        className="w-full py-4 bg-red-50 text-red-600 rounded-2xl font-bold flex items-center justify-center gap-2 hover:bg-red-100 transition-all"
-      >
-        <LogOut className="w-5 h-5" /> {t.logout}
-      </button>
-
-      <Modal isOpen={showGuide} onClose={() => setShowGuide(false)} title={t.guide}>
-        <div className="space-y-4 text-slate-600 text-sm leading-relaxed">
-          <p><strong>Welcome to Family Shaastra!</strong> This app is your digital family archive. Here is how to get started:</p>
-          <ul className="list-disc pl-5 space-y-2">
-            <li><strong>Record Memories:</strong> Use the "Record" tab to add stories, photos, audio, or video. You can even use voice input!</li>
-            <li><strong>Family Tree:</strong> Add your relatives in the "Family Tree" tab to visualize your lineage.</li>
-            <li><strong>Timeline:</strong> Track major family milestones like births, weddings, and moves.</li>
-            <li><strong>Memories:</strong> Browse and search through all your recorded family history.</li>
-            <li><strong>Export:</strong> You can export your memories, tree, or timeline to a Word document at any time.</li>
-          </ul>
-        </div>
-      </Modal>
-
-      <Modal isOpen={showDisclaimer} onClose={() => setShowDisclaimer(false)} title={t.disclaimer}>
-        <div className="space-y-4 text-slate-600 text-sm leading-relaxed">
-          <p><strong>Privacy First:</strong> Family Shaastra is designed to protect your personal family data. Your memories are stored locally on your device.</p>
-          <p><strong>Advertisements:</strong> To keep the basic version free, we show minimal, respectful advertisements. We never use your personal memories or family data for ad targeting.</p>
-          <p><strong>No AI:</strong> This application does not use Artificial Intelligence in its core operations to ensure your data remains private and human-centric.</p>
-          <p><strong>Data Loss:</strong> Since data is stored locally, clearing your browser cache or switching devices may result in data loss unless you have exported your archives.</p>
-        </div>
-      </Modal>
-    </div>
-  );
-
-  return (
-    <div className="max-w-4xl mx-auto space-y-8">
-      <div className="flex items-center justify-between">
-        <h2 className="text-3xl font-bold text-slate-900">{t.settings}</h2>
-      </div>
-
-      <div className="flex flex-wrap border-b border-slate-200">
-        {(['general', 'notifications', 'invitations'] as const).map(tab => (
-          <button
-            key={tab}
-            onClick={() => setActiveSubTab(tab)}
-            className={cn(
-              "px-4 md:px-6 py-3 text-sm font-bold transition-all border-b-2 whitespace-nowrap",
-              activeSubTab === tab 
-                ? "border-emerald-600 text-emerald-600" 
-                : "border-transparent text-slate-400 hover:text-slate-600"
-            )}
-          >
-            {tab === 'general' ? t.general : tab === 'notifications' ? t.notifications : t.invitations}
-          </button>
-        ))}
-      </div>
-
-      <div className="py-4">
-        {activeSubTab === 'general' && renderGeneral()}
-        {activeSubTab === 'notifications' && (
-          <div className="space-y-6">
-            <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-sm flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 bg-emerald-50 rounded-xl flex items-center justify-center">
-                  <Bell className="w-5 h-5 text-emerald-600" />
-                </div>
-                <div>
-                  <h4 className="font-bold text-slate-900">{t.emailNotifications}</h4>
-                  <p className="text-xs text-slate-500">Receive updates about family milestones</p>
-                </div>
-              </div>
-              <button 
-                onClick={() => setEmailNotifications(!emailNotifications)}
-                className={cn(
-                  "w-12 h-6 rounded-full transition-all relative",
-                  emailNotifications ? "bg-emerald-600" : "bg-slate-200"
+          <div className="space-y-2">
+             <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 pl-2">Upload Photo</label>
+             <div onClick={() => fileInputRef.current?.click()} className="w-full h-24 border-2 border-dashed border-slate-200 rounded-xl flex flex-col items-center justify-center gap-1 cursor-pointer hover:border-emerald-400 hover:bg-emerald-50 transition-all group">
+                {formData.photoUrl ? (
+                  <div className="flex items-center gap-2 text-emerald-600 font-bold text-xs"><Check className="w-4 h-4" /> Photo Attached</div>
+                ) : (
+                  <div className="flex flex-col items-center">
+                    <Camera className="w-6 h-6 text-slate-300 group-hover:text-emerald-500" />
+                    <span className="text-[10px] font-bold text-slate-400">Choose from device</span>
+                  </div>
                 )}
-              >
-                <div className={cn(
-                  "absolute top-1 w-4 h-4 bg-white rounded-full transition-all",
-                  emailNotifications ? "right-1" : "left-1"
-                )} />
-              </button>
-            </div>
-            <NotificationsView t={t} notifications={notifications} setNotifications={setNotifications} />
+             </div>
+             <input type="file" ref={fileInputRef} className="hidden" onChange={handleFileChange} accept="image/*" />
           </div>
-        )}
-        {activeSubTab === 'invitations' && (
-          <div className="space-y-6">
-            <div className="flex items-center justify-between">
-              <h3 className="text-xl font-bold text-slate-900">{t.invitations}</h3>
-              <button 
-                onClick={() => setShowInviteModal(true)}
-                className="px-4 py-2 bg-emerald-600 text-white rounded-xl text-sm font-bold flex items-center gap-2"
-              >
-                <UserPlus className="w-4 h-4" /> {t.invite}
-              </button>
-            </div>
 
-            <div className="bg-white border border-slate-200 rounded-3xl overflow-hidden shadow-sm">
-              <table className="w-full text-left">
-                <thead className="bg-slate-50 border-b border-slate-200">
-                  <tr>
-                    <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase">Email</th>
-                    <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase">Date</th>
-                    <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase">Status</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {invitations.length === 0 ? (
-                    <tr>
-                      <td colSpan={3} className="px-6 py-8 text-center text-slate-500 italic">No invitations sent yet</td>
-                    </tr>
-                  ) : (
-                    invitations.map(inv => (
-                      <tr key={inv.id}>
-                        <td className="px-6 py-4 text-sm text-slate-900 font-medium">{inv.email}</td>
-                        <td className="px-6 py-4 text-sm text-slate-500">{inv.sentDate}</td>
-                        <td className="px-6 py-4">
-                          <span className={cn(
-                            "px-2 py-1 rounded-full text-[10px] font-bold uppercase",
-                            inv.status === 'pending' ? "bg-orange-50 text-orange-600" : "bg-emerald-50 text-emerald-600"
-                          )}>
-                            {inv.status}
-                          </span>
-                        </td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
-      </div>
-
-      <Modal isOpen={showInviteModal} onClose={() => setShowInviteModal(false)} title={t.invite}>
-        <form onSubmit={handleSendInvite} className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1">{t.emailAddress}</label>
-            <input 
-              required
-              type="email" 
-              value={inviteEmail}
-              onChange={e => setInviteEmail(e.target.value)}
-              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2 text-slate-900"
-              placeholder="family@example.com"
-            />
-          </div>
-          <button 
-            type="submit"
-            className="w-full py-3 bg-emerald-600 text-white rounded-xl font-bold shadow-lg shadow-emerald-600/20"
-          >
-            Send Invitation
-          </button>
+          <Button className="w-full py-4 rounded-2xl text-base" icon={Check}>Add Member</Button>
         </form>
       </Modal>
     </div>
   );
 }
 
-function LoginView({ t, onLogin }: { t: any, onLogin: (email: string) => void }) {
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [rememberMe, setRememberMe] = useState(true);
+function MemoriesView({ t, memories, setMemories, user, members }: any) {
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [formData, setFormData] = useState<any>({ title: '', date: format(new Date(), 'yyyy-MM-dd'), description: '', fileUrl: '' });
+  const [search, setSearch] = useState('');
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setFormData({ ...formData, fileUrl: reader.result as string });
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const handleSave = async (e: any) => {
     e.preventDefault();
-    onLogin(email);
+    await addDoc(collection(db, 'memories'), {
+      ...formData,
+      userId: user.uid,
+      createdAt: new Date().toISOString()
+    });
+    setFormData({ title: '', date: format(new Date(), 'yyyy-MM-dd'), description: '', fileUrl: '' });
+    setIsModalOpen(false);
+  };
+
+  const filteredMemories = memories.filter((m: any) => 
+    m.title.toLowerCase().includes(search.toLowerCase()) || 
+    m.description.toLowerCase().includes(search.toLowerCase())
+  );
+
+  const exportDoc = async () => {
+    const docObj = new Document({
+      sections: [{
+        children: memories.map((m: Memory) => new Paragraph({
+          children: [
+            new TextRun({ text: m.title, bold: true, size: 28 }),
+            new TextRun({ text: `\nDate: ${m.date}\n`, italics: true }),
+            new TextRun({ text: m.description }),
+          ],
+        }))
+      }]
+    });
+    const blob = await Packer.toBlob(docObj);
+    saveAs(blob, 'Family_Memories.docx');
+  };
+
+  const copyAsMessage = (m: any) => {
+    const text = `Heritage Shared: ${m.title}\nDate: ${m.date}\n\n${m.description}`;
+    navigator.clipboard.writeText(text);
+    alert('Copied to clipboard!');
+  };
+
+  const shareWhatsapp = (m: any) => {
+    const text = `Heritage Shared: ${m.title}\nDate: ${m.date}\n\n${m.description}`;
+    window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank');
   };
 
   return (
-    <div className="min-h-[80vh] flex items-center justify-center p-4">
-      <motion.div 
-        initial={{ opacity: 0, scale: 0.9 }}
-        animate={{ opacity: 1, scale: 1 }}
-        className="w-full max-w-md bg-white border border-slate-200 rounded-[2.5rem] p-8 shadow-xl"
-      >
-        <div className="text-center space-y-2 mb-8">
-          <div className="w-16 h-16 bg-emerald-100 rounded-2xl flex items-center justify-center mx-auto mb-4">
-            <Users className="w-8 h-8 text-emerald-600" />
-          </div>
-          <h2 className="text-3xl font-black text-slate-900">{t.login}</h2>
-          <p className="text-slate-500">Sign in to access your family history</p>
+    <div className="space-y-12">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
+        <div>
+           <h2 className="text-4xl font-black font-serif text-slate-900">{t.memories}</h2>
+           <p className="text-slate-500">Every moment is a treasure for the future.</p>
         </div>
+        <div className="flex gap-4">
+           <Button variant="secondary" onClick={exportDoc} icon={Download}>{t.exportWord}</Button>
+           <Button onClick={() => setIsModalOpen(true)} icon={PlusCircle}>{t.recordMemory}</Button>
+        </div>
+      </div>
 
-        <form onSubmit={handleSubmit} className="space-y-6">
-          <div className="space-y-4">
-            <div>
-              <label className="block text-sm font-bold text-slate-700 mb-1">{t.emailAddress}</label>
-              <div className="relative">
-                <Mail className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
-                <input 
-                  required
-                  type="email" 
-                  value={email}
-                  onChange={e => setEmail(e.target.value)}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-12 pr-4 py-3 text-slate-900 focus:ring-2 focus:ring-emerald-500 outline-none transition-all"
-                  placeholder="name@example.com"
-                />
-              </div>
-            </div>
-            <div>
-              <label className="block text-sm font-bold text-slate-700 mb-1">{t.password}</label>
-              <div className="relative">
-                <Lock className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
-                <input 
-                  required
-                  type="password" 
-                  value={password}
-                  onChange={e => setPassword(e.target.value)}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-12 pr-4 py-3 text-slate-900 focus:ring-2 focus:ring-emerald-500 outline-none transition-all"
-                  placeholder="••••••••"
-                />
-              </div>
-            </div>
-          </div>
+      <div className="relative">
+         <Filter className="absolute left-6 top-1/2 -translate-y-1/2 text-slate-400 w-5 h-5 pointer-events-none" />
+         <input 
+           className="w-full bg-white border border-slate-100 rounded-[2rem] pl-16 pr-8 py-5 outline-none shadow-sm focus:ring-4 focus:ring-emerald-500/5 transition-all font-bold text-lg"
+           placeholder="Search family events, names, or stories..."
+           value={search}
+           onChange={e => setSearch(e.target.value)}
+         />
+      </div>
 
-          <div className="flex items-center justify-between">
-            <label className="flex items-center gap-2 cursor-pointer">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+        {filteredMemories.map((m: any) => (
+          <Card key={m.id} className="group hover:border-emerald-200 transition-all flex flex-col h-full">
+            <div className="aspect-video bg-slate-50 relative overflow-hidden">
+               {m.fileUrl ? (
+                  <img src={m.fileUrl} className="w-full h-full object-cover transition-transform group-hover:scale-105 duration-700" />
+               ) : (
+                  <div className="w-full h-full flex items-center justify-center">
+                     <ImageIcon className="w-16 h-16 text-slate-200" />
+                  </div>
+               )}
+               <div className="absolute top-4 right-4 px-4 py-2 bg-white/90 backdrop-blur-md rounded-full text-[10px] font-black uppercase tracking-widest text-slate-600 shadow-sm">
+                  {m.date}
+               </div>
+            </div>
+            <div className="p-8 space-y-4 flex-1">
+               <h3 className="text-2xl font-black font-serif text-slate-900 group-hover:text-emerald-700 transition-colors leading-tight">{m.title}</h3>
+               <p className="text-slate-500 line-clamp-4 leading-relaxed text-sm">{m.description}</p>
+            </div>
+            <div className="p-6 border-t border-slate-50 bg-slate-50/50 flex items-center justify-between">
+               <div className="flex gap-2">
+                  <button onClick={() => copyAsMessage(m)} className="p-2.5 bg-white rounded-xl border border-slate-100 text-slate-400 hover:text-emerald-600 hover:border-emerald-200 transition-all" title="Copy Message">
+                    <Copy className="w-4 h-4" />
+                  </button>
+                  <button onClick={() => shareWhatsapp(m)} className="p-2.5 bg-white rounded-xl border border-slate-100 text-slate-400 hover:text-emerald-600 hover:border-emerald-200 transition-all" title="Share WhatsApp">
+                    <Share2 className="w-4 h-4" />
+                  </button>
+               </div>
+               <button className="text-xs font-black uppercase tracking-widest text-emerald-600 flex items-center gap-2 hover:translate-x-1 transition-transform">
+                 Read Full <ChevronRight className="w-4 h-4" />
+               </button>
+            </div>
+          </Card>
+        ))}
+      </div>
+
+      <Modal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} title="Record New Memory">
+        <form onSubmit={handleSave} className="space-y-6">
+           <div className="space-y-2">
+              <label className="text-xs font-black uppercase tracking-widest text-slate-400">Title</label>
+              <input required className="w-full bg-slate-50 border border-slate-100 rounded-2xl p-4 font-bold" value={formData.title} onChange={e => setFormData({...formData, title: e.target.value})} />
+           </div>
+           <div className="space-y-4">
+              <div className="space-y-2">
+                <label className="text-xs font-black uppercase tracking-widest text-slate-400">Date</label>
+                <input type="date" className="w-full bg-slate-50 border border-slate-100 rounded-2xl p-4 font-bold" value={formData.date} onChange={e => setFormData({...formData, date: e.target.value})} />
+              </div>
+           </div>
+           <div className="space-y-2">
+              <label className="text-xs font-black uppercase tracking-widest text-slate-400">Story Overview</label>
+              <textarea required className="w-full bg-slate-50 border border-slate-100 rounded-2xl p-4 font-bold min-h-[120px]" value={formData.description} onChange={e => setFormData({...formData, description: e.target.value})} />
+           </div>
+           <div className="space-y-4">
+              <label className="text-xs font-black uppercase tracking-widest text-slate-400">Upload Media (Photos, Video, Audio, PDF, Docs)</label>
+              <div 
+                onClick={() => fileInputRef.current?.click()}
+                className="w-full h-32 border-2 border-dashed border-slate-200 rounded-2xl flex flex-col items-center justify-center gap-2 cursor-pointer hover:border-emerald-400 hover:bg-emerald-50 transition-all group"
+              >
+                {formData.fileUrl ? (
+                  <div className="flex items-center gap-3 text-emerald-600 font-bold">
+                    <Check className="w-6 h-6" /> File Attached
+                  </div>
+                ) : (
+                  <>
+                    <PlusCircle className="w-8 h-8 text-slate-300 group-hover:text-emerald-500" />
+                    <span className="text-sm font-bold text-slate-400">Click to choose a file from your device</span>
+                  </>
+                )}
+              </div>
               <input 
-                type="checkbox" 
-                checked={rememberMe}
-                onChange={e => setRememberMe(e.target.checked)}
-                className="w-4 h-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+                type="file" 
+                ref={fileInputRef} 
+                className="hidden" 
+                onChange={handleFileChange}
+                accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.txt"
               />
-              <span className="text-sm text-slate-600 font-medium">{t.rememberMe}</span>
-            </label>
-          </div>
-
-          <button 
-            type="submit"
-            className="w-full py-4 bg-emerald-600 hover:bg-emerald-700 text-white rounded-2xl font-bold text-lg shadow-lg shadow-emerald-600/20 transition-all"
-          >
-            {t.login}
-          </button>
+           </div>
+           <Button className="w-full py-5 rounded-3xl" icon={Heart}>Preserve Memory</Button>
         </form>
-      </motion.div>
+      </Modal>
+    </div>
+  );
+}
+
+function TimelineView({ t, memories }: any) {
+  return (
+    <div className="space-y-10 px-2">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div>
+           <h2 className="text-3xl font-black font-serif text-slate-900">{t.timeline}</h2>
+           <p className="text-slate-500 text-sm italic">The journey of your family recorded.</p>
+        </div>
+      </div>
+
+      <div className="relative">
+        {/* Central Line */}
+        <div className="hidden lg:block absolute h-0.5 top-1/2 left-0 right-0 bg-emerald-100 -z-10" />
+        
+        <div className="flex flex-wrap gap-8 pb-12 justify-center">
+          {memories.length > 0 ? (
+            memories.sort((a: Memory, b: Memory) => new Date(a.date).getTime() - new Date(b.date).getTime()).map((m: Memory, i: number) => (
+              <motion.div 
+                key={m.id}
+                initial={{ opacity: 0, scale: 0.9 }}
+                animate={{ opacity: 1, scale: 1 }}
+                transition={{ delay: i * 0.05 }}
+                className="relative shrink-0"
+              >
+                 <div className="bg-white border border-slate-100 rounded-[2rem] p-6 shadow-sm hover:border-emerald-400 transition-all hover:shadow-lg w-72 md:w-80 relative group">
+                    <div className="text-[9px] font-black text-emerald-600 uppercase tracking-[0.2em] mb-3 bg-emerald-50 inline-block px-3 py-1 rounded-full">{m.date}</div>
+                    <h3 className="text-lg font-bold text-slate-900 leading-tight mb-2 line-clamp-1">{m.title}</h3>
+                    <p className="text-slate-500 text-xs line-clamp-2 mb-4 leading-relaxed">{m.description}</p>
+                    <button 
+                      onClick={() => {
+                        const text = `⏳ *Heritage Milestone: ${m.title}*\nDate: ${m.date}\n\n${m.description}\n\nPreserved via Family Shaastra.`;
+                        window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank');
+                      }}
+                      className="absolute top-6 right-6 p-2 bg-emerald-50 text-emerald-600 rounded-xl opacity-0 group-hover:opacity-100 transition-all hover:scale-110"
+                    >
+                      <Share2 className="w-4 h-4" />
+                    </button>
+                 </div>
+                 {/* Connection Dot */}
+                 <div className="hidden lg:block absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-4 h-4 bg-emerald-600 rounded-full border-4 border-white shadow-md" />
+              </motion.div>
+            ))
+          ) : (
+            <div className="py-20 text-center w-full text-slate-300">No events recorded in your timeline yet.</div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function FacilitiesView({ t, facilities, user, setFacilities, activeFacility, setActiveFacility }: any) {
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [formData, setFormData] = useState({ title: '', description: '', content: '' });
+
+  const handleCreate = async (e: any) => {
+    e.preventDefault();
+    await addDoc(collection(db, 'facilities'), {
+      ...formData,
+      userId: user.uid,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    });
+    setFormData({ title: '', description: '', content: '' });
+    setIsModalOpen(false);
+  };
+
+  const handleUpdateContent = async (id: string, newContent: string) => {
+    await updateDoc(doc(db, 'facilities', id), {
+      content: newContent,
+      updatedAt: new Date().toISOString()
+    });
+  };
+
+  if (activeFacility) {
+    return (
+      <div className="space-y-8">
+        <div className="flex items-center gap-4">
+          <button onClick={() => setActiveFacility(null)} className="p-3 hover:bg-slate-100 rounded-2xl">
+            <ArrowLeft className="w-6 h-6 text-slate-400" />
+          </button>
+          <div>
+            <h2 className="text-3xl font-black font-serif text-slate-900">{activeFacility.title}</h2>
+            <p className="text-slate-500">{activeFacility.description}</p>
+          </div>
+        </div>
+        <Card className="p-0 overflow-hidden border-2 border-emerald-100 shadow-xl">
+          <textarea 
+            className="w-full min-h-[500px] bg-white outline-none font-medium leading-relaxed resize-none p-10 text-slate-700 text-lg"
+            placeholder="Start drafting your family plans, recipes, or logs here. Everything is private and secured..."
+            defaultValue={activeFacility.content || ''}
+            onBlur={(e) => handleUpdateContent(activeFacility.id, e.target.value)}
+          />
+          <div className="bg-slate-50 px-8 py-4 text-[10px] text-slate-400 uppercase tracking-widest font-black flex items-center gap-2 border-t border-slate-100">
+             <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse" />
+             Content auto-saves on focus loss
+          </div>
+        </Card>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-12">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 px-2">
+        <div>
+           <h2 className="text-4xl font-black font-serif text-slate-900">Custom Facilities</h2>
+           <p className="text-slate-500">Tailor-made tools for your unique family legacy.</p>
+        </div>
+        <Button onClick={() => setIsModalOpen(true)} icon={PlusCircle}>Launch New Facility</Button>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+        {facilities.map((f: CustomFacility) => (
+          <Card key={f.id} className="p-10 space-y-6 flex flex-col items-start bg-emerald-50/10 hover:border-emerald-200 transition-all group relative overflow-hidden">
+             <div className="w-16 h-16 bg-white rounded-3xl flex items-center justify-center border border-emerald-100 shadow-sm transition-transform group-hover:scale-110 group-hover:rotate-3 shadow-emerald-600/5">
+                <LayoutGrid className="w-8 h-8 text-emerald-600" />
+             </div>
+             <div className="space-y-2 flex-1">
+                <h3 className="text-2xl font-black font-serif text-slate-900">{f.title}</h3>
+                <p className="text-slate-500 line-clamp-3 leading-relaxed">{f.description}</p>
+                <button onClick={() => {
+                   const text = `🛠️ *Family Facility: ${f.title}*\nContext: ${f.description}\n\nAccess yours in Family Shaastra.`;
+                   window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank');
+                 }} className="text-[10px] font-black text-emerald-600 uppercase tracking-widest flex items-center gap-1.5 mt-2">
+                  <Share2 className="w-3 h-3" /> WhatsApp Invite
+                </button>
+             </div>
+             <Button variant="secondary" className="w-full py-4 !rounded-2xl" onClick={() => setActiveFacility(f)}>Enter Facility</Button>
+          </Card>
+        ))}
+        {facilities.length === 0 && (
+           <div 
+             onClick={() => setIsModalOpen(true)}
+             className="col-span-full py-32 border-4 border-dashed border-slate-100 rounded-[3rem] flex flex-col items-center justify-center gap-6 cursor-pointer hover:bg-emerald-50 hover:border-emerald-100 transition-all group"
+           >
+              <LayoutGrid className="w-20 h-20 text-slate-200 group-hover:text-emerald-200" />
+              <div className="text-center">
+                <p className="text-xl font-black text-slate-300">No facilities active yet.</p>
+                <p className="text-sm text-slate-400 font-bold">Create a Wedding Planner, Recipe Book, or Health Log.</p>
+              </div>
+           </div>
+        )}
+      </div>
+
+      <Modal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} title="New Family Facility">
+        <form onSubmit={handleCreate} className="space-y-6">
+           <div className="space-y-3">
+              <label className="text-xs font-black uppercase tracking-widest text-slate-400 pl-2">Facility Name</label>
+              <input required className="w-full bg-slate-50 border border-slate-100 rounded-3xl p-5 font-bold focus:ring-4 focus:ring-emerald-500/5 outline-none transition-all" value={formData.title} onChange={e => setFormData({...formData, title: e.target.value})} placeholder="e.g. Grandma's Secret Recipes" />
+           </div>
+           <div className="space-y-3">
+              <label className="text-xs font-black uppercase tracking-widest text-slate-400 pl-2">Purpose / Context</label>
+              <textarea required className="w-full bg-slate-50 border border-slate-100 rounded-3xl p-5 font-bold min-h-[120px] focus:ring-4 focus:ring-emerald-500/5 outline-none transition-all" value={formData.description} onChange={e => setFormData({...formData, description: e.target.value})} placeholder="What is the goal of this customized tool?" />
+           </div>
+           <Button className="w-full py-6 rounded-3xl shadow-2xl shadow-emerald-600/30" icon={PlusCircle}>Establish Facility Now</Button>
+        </form>
+      </Modal>
+    </div>
+  );
+}
+
+function SettingsView({ t, user, invitations, setInvitations, setMembers, navigateTo, members }: any) {
+  const [isInviteOpen, setIsInviteOpen] = useState(false);
+  const [isManageOpen, setIsManageOpen] = useState(false);
+  const [inviteData, setInviteData] = useState({ recipientName: '', recipientEmail: '' });
+
+  const handleSendInvite = async (e: any) => {
+    e.preventDefault();
+    const standardMessage = `Hello ${inviteData.recipientName},\n\n${user.displayName} has invited you to join their Family. Come to Family Shaastra.\n\n"Family in an app"`;
+    
+    await addDoc(collection(db, 'invitations'), {
+      ...inviteData,
+      senderId: user.uid,
+      senderName: user.displayName,
+      message: standardMessage,
+      status: 'pending',
+      sentAt: new Date().toISOString()
+    });
+
+    const mailtoUrl = `mailto:${inviteData.recipientEmail}?subject=${encodeURIComponent('A Special Invitation from Your Family')}&body=${encodeURIComponent(standardMessage)}`;
+    window.location.href = mailtoUrl;
+
+    setInviteData({ recipientName: '', recipientEmail: '' });
+    setIsInviteOpen(false);
+  };
+
+  const deleteMember = async (id: string) => {
+    if (confirm("Are you sure you want to remove this member from the digital lineage?")) {
+      await deleteDoc(doc(db, 'family_members', id));
+    }
+  };
+
+  const acceptInvite = async (invite: any) => {
+    try {
+      await updateDoc(doc(db, 'invitations', invite.id), { status: 'accepted' });
+      await addDoc(collection(db, 'family_members'), {
+        userId: user.uid,
+        name: invite.senderName,
+        relation: 'Connected Family',
+        description: `Linked via invitation from ${invite.senderName}`,
+        createdAt: new Date().toISOString()
+      });
+      alert(`Invitation from ${invite.senderName} accepted! They have been added to your lineage.`);
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  return (
+    <div className="space-y-12">
+      <div className="space-y-3">
+        <h2 className="text-3xl font-black font-serif text-slate-900">{t.settings}</h2>
+        <p className="text-slate-500 text-sm">Sophisticated Family & Invitation Management.</p>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-10">
+        <section className="space-y-8">
+           <Card className="bg-emerald-900 text-white p-6 md:p-10 relative overflow-hidden border-none shadow-2xl">
+              <div className="relative z-10 space-y-6">
+                <div className="w-12 h-1 bg-amber-400 rounded-full" />
+                <h3 className="text-3xl font-black font-serif leading-tight">Grow Your Heritage.</h3>
+                <p className="text-sm text-emerald-100/60 font-medium leading-relaxed">
+                  Bring your descendants and ancestors into the "Family in an app" experience. Send sophisticated invites.
+                </p>
+                <div className="pt-2">
+                  <Button variant="accent" className="px-10 py-4 rounded-2xl text-sm font-black shadow-xl" onClick={() => setIsInviteOpen(true)} icon={Mail}>Craft Invitation</Button>
+                </div>
+              </div>
+              <div className="absolute top-0 right-0 p-8 opacity-[0.05] pointer-events-none">
+                <Mail className="w-64 h-64 -rotate-12" />
+              </div>
+           </Card>
+
+           {invitations.some((i: any) => i.status === 'pending') && (
+             <div className="space-y-4">
+               <h4 className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-400 px-2">Incoming Requests</h4>
+               <div className="space-y-3">
+                  {invitations.filter((i: any) => i.status === 'pending').map((invite: any) => (
+                    <Card key={invite.id} className="p-6 bg-amber-50/30 border-amber-100/50 flex items-center justify-between">
+                       <div className="flex items-center gap-4">
+                          <div className="p-3 bg-amber-100 text-amber-600 rounded-2xl">
+                             <Mail className="w-5 h-5" />
+                          </div>
+                          <div>
+                             <p className="font-bold text-slate-900 text-sm">{invite.senderName}</p>
+                             <p className="text-[10px] text-slate-500 font-medium">Invited you to connect</p>
+                          </div>
+                       </div>
+                       <Button variant="accent" className="text-xs py-2 px-4 shadow-none" onClick={() => acceptInvite(invite)}>Accept</Button>
+                    </Card>
+                  ))}
+               </div>
+             </div>
+           )}
+
+           <div className="space-y-4">
+              <div className="flex items-center justify-between px-2">
+                 <h4 className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-400">Manage Lineage</h4>
+                 <button onClick={() => setIsManageOpen(true)} className="text-[10px] font-black text-emerald-600 uppercase border-b border-emerald-600">View All Members</button>
+              </div>
+              <div className="grid grid-cols-1 gap-4">
+                {members.slice(0, 3).map((m: any) => (
+                  <Card key={m.id} className="p-4 flex items-center justify-between border border-slate-100">
+                    <div className="flex items-center gap-4">
+                       <div className="w-10 h-10 rounded-full bg-slate-100 overflow-hidden">
+                          {m.photoUrl ? <img src={m.photoUrl} className="w-full h-full object-cover" /> : <Users className="w-5 h-5 m-2.5 text-slate-300" />}
+                       </div>
+                       <div>
+                          <p className="font-bold text-slate-900 text-sm">{m.name}</p>
+                          <p className="text-[10px] text-slate-400 uppercase font-black tracking-widest">{m.relation}</p>
+                       </div>
+                    </div>
+                    <button onClick={() => deleteMember(m.id)} className="p-2 text-slate-300 hover:text-red-500 transition-colors">
+                       <Trash2 className="w-4 h-4" />
+                    </button>
+                  </Card>
+                ))}
+                {members.length > 3 && <p className="text-center text-[10px] text-slate-400 font-bold italic">And {members.length - 3} more members...</p>}
+              </div>
+           </div>
+        </section>
+
+        <section className="space-y-8">
+           <Card className="p-10 space-y-8 bg-white border border-slate-100 shadow-xl">
+              <div className="flex items-center gap-6">
+                <img src={user.photoURL || ''} alt="" className="w-20 h-20 rounded-[2rem] border-4 border-slate-50 shadow-inner" />
+                <div className="space-y-0.5">
+                  <h3 className="text-2xl font-black font-serif text-slate-900 leading-none">{user.displayName}</h3>
+                  <p className="text-slate-400 text-sm font-bold">{user.email}</p>
+                </div>
+              </div>
+
+              <div className="space-y-1.5 font-bold text-sm">
+                 <div className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100 hover:bg-slate-100 transition-colors cursor-pointer group">
+                    <div className="flex items-center gap-3">
+                       <Globe className="w-5 h-5 text-emerald-600" />
+                       <span className="text-slate-700">App Language</span>
+                    </div>
+                    <span className="text-[9px] font-black text-emerald-600 bg-white px-2 py-0.5 rounded-full border border-slate-100 uppercase">English</span>
+                 </div>
+                 
+                 <div onClick={() => navigateTo('notifications')} className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100 hover:bg-slate-100 transition-colors cursor-pointer group">
+                    <div className="flex items-center gap-3">
+                       <Bell className="w-5 h-5 text-amber-500" />
+                       <span className="text-slate-700">System Notifications</span>
+                    </div>
+                    <ChevronRight className="w-4 h-4 text-slate-300" />
+                 </div>
+              </div>
+
+              <Button variant="danger" className="w-full py-4 rounded-2xl flex items-center justify-center gap-2 font-black text-base" onClick={() => auth.signOut()} icon={LogOut}>
+                Sign Out
+              </Button>
+           </Card>
+
+           <Card className="p-8 bg-slate-950 text-white relative overflow-hidden shadow-2xl">
+              <div className="relative z-10 space-y-3">
+                 <Shield className="w-6 h-6 text-emerald-400" />
+                 <h4 className="text-xl font-black font-serif">Family Data Sanctuary</h4>
+                 <p className="text-slate-400 text-[10px] leading-relaxed">No AI operations. No data selling. Pure heritage preservation in the most secure digital vault available.</p>
+              </div>
+           </Card>
+        </section>
+      </div>
+
+      {/* Invitations Management Modal */}
+      <Modal isOpen={isManageOpen} onClose={() => setIsManageOpen(false)} title="Sophisticated Member Management">
+         <div className="space-y-6 max-h-[70vh] overflow-y-auto pr-2 scrollbar-hide">
+            <div className="space-y-3">
+               <h5 className="text-[10px] font-black uppercase tracking-widest text-slate-400">Current Family Lineage</h5>
+               <div className="grid grid-cols-1 gap-3">
+                  {members.map((m: any) => (
+                    <div key={m.id} className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100">
+                       <div className="flex items-center gap-4">
+                          <img src={m.photoUrl || 'https://picsum.photos/seed/user/100/100'} className="w-12 h-12 rounded-xl object-cover shrink-0" />
+                          <div>
+                             <p className="font-bold text-slate-900">{m.name}</p>
+                             <p className="text-[9px] text-emerald-600 font-black uppercase">{m.relation}</p>
+                          </div>
+                       </div>
+                       <div className="flex items-center gap-2">
+                          <button onClick={() => deleteMember(m.id)} className="p-3 bg-white text-slate-300 hover:text-red-500 rounded-xl border border-slate-100 transition-colors shadow-sm">
+                             <Trash2 className="w-4 h-4" />
+                          </button>
+                       </div>
+                    </div>
+                  ))}
+               </div>
+            </div>
+            <div className="space-y-3">
+               <h5 className="text-[10px] font-black uppercase tracking-widest text-slate-400">Past Invitations Archive</h5>
+               <div className="grid grid-cols-1 gap-3">
+                  {invitations.map((i: any) => (
+                    <div key={i.id} className="p-4 bg-white border border-slate-100 rounded-2xl flex items-center justify-between">
+                       <div>
+                          <p className="font-bold text-sm text-slate-900">{i.recipientName}</p>
+                          <p className="text-[9px] text-slate-400 font-medium">{i.recipientEmail}</p>
+                       </div>
+                       <span className={cn("text-[9px] font-black px-3 py-1 rounded-full uppercase", 
+                          i.status === 'accepted' ? "bg-emerald-50 text-emerald-600" : "bg-amber-50 text-amber-600"
+                       )}>
+                          {i.status}
+                       </span>
+                    </div>
+                  ))}
+               </div>
+            </div>
+         </div>
+         <div className="pt-6 border-t border-slate-100">
+            <Button className="w-full py-4 rounded-2xl" variant="secondary" onClick={() => setIsManageOpen(false)}>Close Management</Button>
+         </div>
+      </Modal>
+
+      <Modal isOpen={isInviteOpen} onClose={() => setIsInviteOpen(false)} title="Newsletter Invitation">
+         <form onSubmit={handleSendInvite} className="space-y-6">
+            <div className="bg-emerald-50/50 p-6 rounded-[2rem] border border-emerald-100 text-center space-y-3">
+               <div className="inline-flex flex-col items-center"><Logo /></div>
+               <p className="text-[11px] text-slate-600 font-medium italic leading-relaxed px-4">
+                 "Family in an app. Our roots run deep. We invite you to join us in documenting every victory for the generations to come."
+               </p>
+            </div>
+            <div className="grid grid-cols-1 gap-4">
+               <div className="space-y-1.5">
+                 <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 pl-4 block">Recipient Name</label>
+                 <input required className="w-full bg-slate-50 border border-slate-100 rounded-2xl p-4 font-bold outline-none focus:ring-2 focus:ring-emerald-500/20 transition-all text-sm" value={inviteData.recipientName} onChange={e => setInviteData({...inviteData, recipientName: e.target.value})} placeholder="Shared Heritage Recipient Name" />
+               </div>
+               <div className="space-y-1.5">
+                 <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 pl-4 block">Email Address</label>
+                 <input required type="email" className="w-full bg-slate-50 border border-slate-100 rounded-2xl p-4 font-bold outline-none focus:ring-2 focus:ring-emerald-500/20 transition-all text-sm" value={inviteData.recipientEmail} onChange={e => setInviteData({...inviteData, recipientEmail: e.target.value})} placeholder="email@family.com" />
+               </div>
+            </div>
+            <Button className="w-full py-5 rounded-3xl shadow-xl" icon={Share2}>Send Invitation</Button>
+         </form>
+      </Modal>
+    </div>
+  );
+}
+
+function NotificationsTab({ t, notifications }: any) {
+  return (
+    <div className="max-w-3xl mx-auto space-y-12">
+        <h2 className="text-4xl font-black font-serif text-slate-900">System Notifications</h2>
+        <div className="space-y-4">
+           {notifications.length > 0 ? notifications.map((n: any) => (
+             <Card key={n.id} className="p-8 flex gap-6 items-start hover:border-emerald-200 transition-all">
+                <div className="p-4 bg-emerald-50 text-emerald-600 rounded-2xl">
+                   <Bell className="w-8 h-8" />
+                </div>
+                <div className="space-y-1">
+                   <h4 className="font-bold text-slate-900 leading-tight">{n.title}</h4>
+                   <p className="text-slate-500 text-sm">{n.body}</p>
+                   <p className="text-[10px] font-black text-slate-300 uppercase pt-2">
+                     {format(new Date(n.date), 'MMM dd, HH:mm')}
+                   </p>
+                </div>
+             </Card>
+           )) : (
+             <div className="py-20 text-center text-slate-300">
+                <Bell className="w-16 h-16 mx-auto mb-4 opacity-10" />
+                <p>No new notifications at this moment.</p>
+             </div>
+           )}
+        </div>
+    </div>
+  );
+}
+
+function GuideView({ t, navigateTo }: any) {
+  const steps = [
+    { title: 'Invite Your Family', desc: 'Securely invite relatives via official newsletters to contribute to your lineage.', icon: Mail },
+    { title: 'Record Memories', desc: 'Upload photos, audio, and documents to preserve stories that last forever.', icon: Camera },
+    { title: 'Build the Tree', desc: 'Construct a visual map of your ancestors and descendants.', icon: Users },
+    { title: 'Custom Facilities', desc: 'Create private tools like recipe logs or health diaries for your family nodes.', icon: LayoutGrid }
+  ];
+
+  return (
+    <div className="max-w-4xl mx-auto space-y-12">
+      <div className="flex items-center gap-4">
+        <button onClick={() => navigateTo('home')} className="p-3 hover:bg-slate-100 rounded-2xl"><ArrowLeft /></button>
+        <h2 className="text-4xl font-black font-serif text-slate-900">User Guide</h2>
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+        {steps.map((step, idx) => (
+          <Card key={idx} className="p-10 space-y-4">
+            <div className="w-12 h-12 bg-emerald-50 text-emerald-600 rounded-2xl flex items-center justify-center">
+              <step.icon className="w-6 h-6" />
+            </div>
+            <h3 className="text-xl font-bold">{step.title}</h3>
+            <p className="text-slate-500 text-sm leading-relaxed">{step.desc}</p>
+          </Card>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function DisclaimerView({ t, navigateTo }: any) {
+  return (
+    <div className="max-w-3xl mx-auto space-y-12">
+      <div className="flex items-center gap-4">
+        <button onClick={() => navigateTo('home')} className="p-3 hover:bg-slate-100 rounded-2xl"><ArrowLeft /></button>
+        <h2 className="text-4xl font-black font-serif text-slate-900">Legal Disclaimer</h2>
+      </div>
+      <Card className="p-12 space-y-8 prose prose-slate max-w-none">
+        <div className="space-y-4">
+          <h3 className="text-2xl font-black font-serif text-slate-900">Privacy & Heritage</h3>
+          <p className="text-slate-500 font-medium">Family Shaastra is designed as a personal, private archive. Your data remains yours. We do not use AI to process, crawl, or analyze your family memories. Your legacy is kept in a secure vault meant only for your invited circle.</p>
+        </div>
+        <div className="space-y-4">
+          <h3 className="text-2xl font-black font-serif text-slate-900">Data Integrity</h3>
+          <p className="text-slate-500 font-medium">While we provide secure storage via Google Cloud infrastructure, users are encouraged to maintain their own backups. We are not liable for accidental data loss or unauthorized access resulting from compromised user credentials.</p>
+        </div>
+      </Card>
     </div>
   );
 }

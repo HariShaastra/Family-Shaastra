@@ -1,0 +1,157 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 0. Global Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Helper Functions ---
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isVerified() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    // --- Validation Blueprints ---
+
+    function isValidUserProfile(data) {
+      return data.keys().hasAll(['userId', 'email']) &&
+             data.userId == request.auth.uid &&
+             data.email is string && data.email.size() > 0 &&
+             (!('displayName' in data) || (data.displayName is string && data.displayName.size() < 100)) &&
+             (!('photoURL' in data) || (data.photoURL is string && data.photoURL.size() < 1000));
+    }
+
+    function isValidMemory(data) {
+      return data.keys().hasAll(['userId', 'title', 'date']) &&
+             data.userId == request.auth.uid &&
+             data.title is string && data.title.size() > 0 && data.title.size() < 200 &&
+             data.date is string && data.date.matches('^\\d{4}-\\d{2}-\\d{2}$') &&
+             (!('description' in data) || (data.description is string && data.description.size() < 2000)) &&
+             (!('type' in data) || (data.type in ['text', 'photo', 'video', 'audio', 'document', 'link', 'album'])) &&
+             (!('tags' in data) || (data.tags is list && data.tags.size() <= 20));
+    }
+
+    function isValidFamilyMember(data) {
+      return data.keys().hasAll(['userId', 'name', 'relation']) &&
+             data.userId == request.auth.uid &&
+             data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
+             data.relation is string && data.relation.size() < 50;
+    }
+
+    function isValidInvitation(data) {
+      return data.keys().hasAll(['senderId', 'recipientEmail', 'status']) &&
+             data.senderId == request.auth.uid &&
+             data.recipientEmail is string && data.recipientEmail.size() > 0 &&
+             data.status in ['pending', 'accepted', 'declined'];
+    }
+
+    function isValidTimeCapsule(data) {
+      return data.keys().hasAll(['userId', 'title', 'openingDate', 'createdBy']) &&
+             data.userId == request.auth.uid &&
+             data.title is string && data.title.size() > 0 && data.title.size() < 100 &&
+             data.openingDate is string &&
+             data.createdBy is string && data.createdBy.size() < 100;
+    }
+
+    function isValidFamilyEvent(data) {
+      return data.keys().hasAll(['userId', 'title', 'date', 'status']) &&
+             data.userId == request.auth.uid &&
+             data.title is string && data.title.size() > 0 && data.title.size() < 200 &&
+             data.date is string &&
+             data.status in ['planning', 'confirmed', 'executed', 'cancelled'];
+    }
+
+    function isValidFacility(data) {
+      return data.keys().hasAll(['userId', 'title']) &&
+             data.userId == request.auth.uid &&
+             data.title is string && data.title.size() > 0 && data.title.size() < 100;
+    }
+
+    // --- Collection Rules ---
+
+    match /users/{userId} {
+      allow get: if isSignedIn();
+      allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow create: if isOwner(userId) && isValidUserProfile(incoming());
+      allow update: if isOwner(userId) && isValidUserProfile(incoming()) && 
+                    incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'photoURL', 'notificationToken']);
+    }
+
+    match /memories/{memoryId} {
+      allow get: if isOwner(resource.data.userId);
+      allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow create: if isSignedIn() && isValidMemory(incoming());
+      allow update: if isOwner(existing().userId) && isValidMemory(incoming()) &&
+                    incoming().userId == existing().userId;
+      allow delete: if isOwner(existing().userId);
+    }
+
+    match /family_members/{memberId} {
+      allow get: if isSignedIn(); // Broad read for collaborators, but we should refine if app grows
+      allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow create: if isSignedIn() && isValidFamilyMember(incoming());
+      allow update: if isOwner(existing().userId) && isValidFamilyMember(incoming()) &&
+                    incoming().userId == existing().userId;
+      allow delete: if isOwner(existing().userId);
+    }
+
+    match /invitations/{invitationId} {
+      allow get: if isSignedIn() && (resource.data.senderId == request.auth.uid || resource.data.recipientEmail == request.auth.token.email);
+      allow list: if isSignedIn() && (resource.data.senderId == request.auth.uid || resource.data.recipientEmail == request.auth.token.email);
+      allow create: if isSignedIn() && isValidInvitation(incoming());
+      allow update: if isSignedIn() && (
+        (isOwner(existing().senderId) && incoming().senderId == existing().senderId) ||
+        (resource.data.recipientEmail == request.auth.token.email && incoming().diff(existing()).affectedKeys().hasOnly(['status']))
+      );
+      allow delete: if isOwner(existing().senderId);
+    }
+
+    match /facilities/{facilityId} {
+      allow get: if isOwner(resource.data.userId);
+      allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow create: if isSignedIn() && isValidFacility(incoming());
+      allow update: if isOwner(existing().userId) && isValidFacility(incoming()) &&
+                    incoming().userId == existing().userId;
+      allow delete: if isOwner(existing().userId);
+    }
+
+    match /time_capsules/{capsuleId} {
+      allow get: if isOwner(resource.data.userId) || (existing().openingDate <= request.time.toMillis() / 1000); // Simple check for opening
+      allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow create: if isSignedIn() && isValidTimeCapsule(incoming());
+      allow update: if isOwner(existing().userId) && isValidTimeCapsule(incoming()) &&
+                    incoming().userId == existing().userId;
+      allow delete: if isOwner(existing().userId);
+    }
+
+    match /events/{eventId} {
+      allow get: if isOwner(resource.data.userId); // Only owner for now
+      allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow create: if isSignedIn() && isValidFamilyEvent(incoming());
+      allow update: if isOwner(existing().userId) && isValidFamilyEvent(incoming()) &&
+                    incoming().userId == existing().userId &&
+                    (existing().status != 'executed' || incoming().diff(existing()).affectedKeys().size() == 0); // Lock if executed
+      allow delete: if isOwner(existing().userId);
+    }
+  }
+}

@@ -9,7 +9,6 @@ export interface Translation {
   settings: string;
   welcome: string;
   tagline: string;
-  language: string;
   logout: string;
   add: string;
   edit: string;
@@ -25,94 +24,70 @@ export interface Translation {
   recordMemory: string;
   notifications: string;
   exportWord: string;
-  voiceInput: string;
-  categories: string;
-  photo: string;
-  audio: string;
-  video: string;
-  text: string;
-  document: string;
-  prompts: string;
+  copyMessage: string;
+  shareWhatsapp: string;
   invitations: string;
-  familyMember: string;
-  familyFriend: string;
-  other: string;
-  login: string;
-  emailAddress: string;
-  password: string;
-  rememberMe: string;
-  emailNotifications: string;
-  invite: string;
+  back: string;
   guide: string;
   disclaimer: string;
-  premium: string;
-  upgrade: string;
-  resources: string;
-  back: string;
-  sponsored: string;
-  sponsoredBy: string;
-  freeVersion: string;
-  premiumVersion: string;
-  storageLimit: string;
-  unlimitedStorage: string;
-  noAds: string;
-  priorityBackup: string;
-}
-
-export type MemoryCategory = 'photo' | 'audio' | 'video' | 'text' | 'document';
-
-export interface MediaAttachment {
-  id: string;
-  type: MemoryCategory;
-  url: string;
-  name: string;
-}
-
-export interface FamilyMember {
-  id: string;
-  name: string;
-  relation: string;
-  birthDate?: string;
-  deathDate?: string;
-  photo?: string;
-  parentId?: string;
-  email?: string;
-  category?: 'family' | 'friend' | 'other';
-}
-
-export interface TimelineEvent {
-  id: string;
-  date: string;
-  title: string;
-  description: string;
-  type: 'birth' | 'marriage' | 'achievement' | 'milestone';
-  media?: MediaAttachment[];
+  facilities: string;
+  createFacility: string;
 }
 
 export interface Memory {
   id: string;
+  userId: string;
   title: string;
-  date: string;
   description: string;
-  imageUrl?: string;
-  author: string;
-  category: MemoryCategory;
-  media?: MediaAttachment[];
+  date: string;
+  fileUrl?: string;
+  fileName?: string;
+  fileType?: string;
+  location?: string;
+  tags?: string[];
   personId?: string;
+  createdAt: string;
 }
 
-export interface AppNotification {
+export interface FamilyMember {
   id: string;
-  title: string;
-  message: string;
-  date: string;
-  type: 'milestone' | 'invitation' | 'update';
-  read: boolean;
+  userId: string;
+  name: string;
+  relation: string;
+  description?: string;
+  photoUrl?: string;
+  parentId?: string;
+  siblingOfId?: string;
+  partnerOfId?: string;
+  birthDate?: string;
+  deathDate?: string;
 }
 
 export interface Invitation {
   id: string;
+  senderId: string;
+  senderName: string;
+  recipientEmail: string;
+  recipientName: string;
+  message: string;
+  status: 'pending' | 'accepted' | 'declined';
+  sentAt: string;
+}
+
+export interface CustomFacility {
+  id: string;
+  userId: string;
+  title: string;
+  icon: string;
+  description: string;
+  createdAt: string;
+}
+
+export interface UserProfile {
+  userId: string;
   email: string;
-  status: 'pending' | 'accepted' | 'rejected';
-  sentDate: string;
+  displayName: string;
+  photoURL?: string;
+  notificationToken?: string;
+  createdAt: string;
 }
