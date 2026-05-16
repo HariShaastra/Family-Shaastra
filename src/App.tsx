@@ -163,7 +163,7 @@ const Modal = ({ isOpen, onClose, title, children }: { isOpen: boolean, onClose:
         className="bg-white border border-slate-100 rounded-[2.5rem] w-full max-w-lg overflow-hidden shadow-2xl"
       >
         <div className="p-8 border-b border-slate-50 flex items-center justify-between">
-          <h3 className="text-2xl font-black text-slate-900 font-serif">{title}</h3>
+          <h3 className="text-2xl font-black text-slate-900 font-serif break-words">{title}</h3>
           <button onClick={onClose} className="p-2 hover:bg-slate-100 rounded-full transition-colors">
             <X className="w-6 h-6 text-slate-400" />
           </button>
@@ -211,12 +211,13 @@ export default function App() {
       setLoading(false);
       if (user) {
         try {
-          await setDoc(doc(db, 'users', user.uid), {
+          const userRef = doc(db, 'users', user.uid);
+          await setDoc(userRef, {
             userId: user.uid,
             email: user.email,
             displayName: user.displayName,
             photoURL: user.photoURL,
-            createdAt: new Date().toISOString()
+            lastLogin: new Date().toISOString()
           }, { merge: true });
         } catch (e) {
           handleFirestoreError(e, OperationType.WRITE, `users/${user.uid}`);
@@ -464,7 +465,7 @@ function renderContent(tab: string, t: any, user: FirebaseUser, members: FamilyM
     case 'events': return <EventPlannerView t={t} user={user} />;
     case 'capsule': return <TimeCapsuleView t={t} user={user} />;
     case 'memories': return <MemoriesView t={t} memories={memories} setMemories={setMemories} user={user} members={members} />;
-    case 'facilities': return <FacilitiesView t={t} facilities={facilities} user={user} setFacilities={setFacilities} activeFacility={activeFacility} setActiveFacility={setActiveFacility} />;
+    case 'facilities': return <ToolboxView t={t} facilities={facilities} user={user} setFacilities={setFacilities} activeFacility={activeFacility} setActiveFacility={setActiveFacility} />;
     case 'settings': return <SettingsView t={t} user={user} invitations={invitations} setInvitations={setInvitations} setMembers={setMembers} navigateTo={navigateTo} members={members} />;
     case 'notifications': return <NotificationsTab t={t} notifications={notifications} />;
     case 'guide': return <GuideView t={t} navigateTo={navigateTo} />;
@@ -547,7 +548,7 @@ function TimeCapsuleView({ t, user }: any) {
                </div>
                <div className="space-y-4 flex-1 w-full">
                   <div>
-                    <h3 className="text-2xl font-black font-serif text-slate-900 mb-1">{c.title}</h3>
+                    <h3 className="text-2xl font-black font-serif text-slate-900 mb-1 break-words">{c.title}</h3>
                     <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-slate-400">
                       <UserIcon className="w-3 h-3" /> {c.createdBy}
                     </div>
@@ -700,7 +701,7 @@ function EventPlannerView({ t, user }: any) {
                    <div className="flex-1 space-y-3">
                       <div className="flex items-start justify-between">
                          <div>
-                            <h4 className="text-xl font-bold text-slate-900">{ev.title}</h4>
+                            <h4 className="text-xl font-bold text-slate-900 break-words">{ev.title}</h4>
                             <div className="flex items-center gap-3 mt-1">
                                <div className="flex items-center gap-1.5 text-xs font-medium text-slate-400">
                                  <MapPin className="w-3 h-3 text-emerald-500" /> {ev.location}
@@ -719,7 +720,7 @@ function EventPlannerView({ t, user }: any) {
                            {ev.status}
                          </div>
                       </div>
-                      <p className="text-slate-500 text-sm line-clamp-2 leading-relaxed">{ev.description}</p>
+                      <p className="text-slate-500 text-sm break-words leading-relaxed">{ev.description}</p>
                       <div className="flex flex-wrap items-center gap-3 pt-2">
                          {ev.status !== 'executed' && (
                            <button onClick={async () => await updateDoc(doc(db, 'events', ev.id), { status: 'executed' })} className="px-4 py-2.5 bg-slate-900 text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-emerald-600 transition-all flex items-center gap-2">
@@ -859,13 +860,12 @@ function HomeView({ t, user, navigateTo }: any) {
           >
             A Digital Family Sanctuary
           </motion.div>
-          <h1 className="text-3xl md:text-4xl lg:text-5xl font-black font-serif leading-tight">{t.welcome}, {user.displayName.split(' ')[0]}</h1>
+          <h1 className="text-3xl md:text-4xl lg:text-5xl font-black font-serif leading-tight break-words">{t.welcome}</h1>
           <div className="space-y-4 max-w-xl">
-            <p className="text-lg text-emerald-50 font-black font-serif italic">"Family in an app."</p>
-            <div className="space-y-2 text-emerald-100/70 text-xs font-medium leading-relaxed">
-              <p>• Connect with your ancestors. Collaborate with siblings.</p>
-              <p>• Record your legacy in a secure digital vault.</p>
-              <p>• Build a beautiful, interactive family record.</p>
+            <p className="text-lg text-emerald-50 font-black font-serif italic">"Preserving Your Family Legacy."</p>
+            <div className="space-y-2 text-emerald-100/100 text-xs font-medium leading-relaxed">
+              <p>• Grow your Family Tree. Plan reunions and events.</p>
+              <p>• Save your memories and records safely forever.</p>
             </div>
           </div>
           <div className="flex flex-wrap gap-4 pt-4">
@@ -1267,8 +1267,8 @@ function MemoriesView({ t, memories, setMemories, user, members }: any) {
                </div>
             </div>
             <div className="p-8 space-y-4 flex-1">
-               <h3 className="text-2xl font-black font-serif text-slate-900 group-hover:text-emerald-700 transition-colors leading-tight">{m.title}</h3>
-               <p className="text-slate-500 line-clamp-4 leading-relaxed text-sm">{m.description}</p>
+               <h3 className="text-2xl font-black font-serif text-slate-900 group-hover:text-emerald-700 transition-colors leading-tight break-words">{m.title}</h3>
+               <p className="text-slate-500 break-words leading-relaxed text-sm">{m.description}</p>
             </div>
             <div className="p-6 border-t border-slate-50 bg-slate-50/50 flex items-center justify-between">
                <div className="flex gap-2">
@@ -1361,8 +1361,8 @@ function TimelineView({ t, memories }: any) {
               >
                  <div className="bg-white border border-slate-100 rounded-[2rem] p-6 shadow-sm hover:border-emerald-400 transition-all hover:shadow-lg w-72 md:w-80 relative group">
                     <div className="text-[9px] font-black text-emerald-600 uppercase tracking-[0.2em] mb-3 bg-emerald-50 inline-block px-3 py-1 rounded-full">{m.date}</div>
-                    <h3 className="text-lg font-bold text-slate-900 leading-tight mb-2 line-clamp-1">{m.title}</h3>
-                    <p className="text-slate-500 text-xs line-clamp-2 mb-4 leading-relaxed">{m.description}</p>
+                    <h3 className="text-lg font-bold text-slate-900 leading-tight mb-2 break-words">{m.title}</h3>
+                    <p className="text-slate-500 text-xs break-words mb-4 leading-relaxed">{m.description}</p>
                     <button 
                       onClick={() => {
                         const text = `⏳ *Heritage Milestone: ${m.title}*\nDate: ${m.date}\n\n${m.description}\n\nPreserved via Family Shaastra.`;
@@ -1386,27 +1386,35 @@ function TimelineView({ t, memories }: any) {
   );
 }
 
-function FacilitiesView({ t, facilities, user, setFacilities, activeFacility, setActiveFacility }: any) {
+function ToolboxView({ t, facilities, user, setFacilities, activeFacility, setActiveFacility }: any) {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [formData, setFormData] = useState({ title: '', description: '', content: '' });
 
   const handleCreate = async (e: any) => {
     e.preventDefault();
-    await addDoc(collection(db, 'facilities'), {
-      ...formData,
-      userId: user.uid,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
-    });
-    setFormData({ title: '', description: '', content: '' });
-    setIsModalOpen(false);
+    try {
+      await addDoc(collection(db, 'facilities'), {
+        ...formData,
+        userId: user.uid,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      });
+      setFormData({ title: '', description: '', content: '' });
+      setIsModalOpen(false);
+    } catch (err) {
+      handleFirestoreError(err, OperationType.CREATE, 'facilities');
+    }
   };
 
   const handleUpdateContent = async (id: string, newContent: string) => {
-    await updateDoc(doc(db, 'facilities', id), {
-      content: newContent,
-      updatedAt: new Date().toISOString()
-    });
+    try {
+      await updateDoc(doc(db, 'facilities', id), {
+        content: newContent,
+        updatedAt: new Date().toISOString()
+      });
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, `facilities/${id}`);
+    }
   };
 
   if (activeFacility) {
@@ -1424,13 +1432,13 @@ function FacilitiesView({ t, facilities, user, setFacilities, activeFacility, se
         <Card className="p-0 overflow-hidden border-2 border-emerald-100 shadow-xl">
           <textarea 
             className="w-full min-h-[500px] bg-white outline-none font-medium leading-relaxed resize-none p-10 text-slate-700 text-lg"
-            placeholder="Start drafting your family plans, recipes, or logs here. Everything is private and secured..."
+            placeholder="Start drafting your family plans, recipes, or logs here..."
             defaultValue={activeFacility.content || ''}
             onBlur={(e) => handleUpdateContent(activeFacility.id, e.target.value)}
           />
           <div className="bg-slate-50 px-8 py-4 text-[10px] text-slate-400 uppercase tracking-widest font-black flex items-center gap-2 border-t border-slate-100">
              <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse" />
-             Content auto-saves on focus loss
+             Private Workspace • Saves automatically
           </div>
         </Card>
       </div>
@@ -1441,56 +1449,56 @@ function FacilitiesView({ t, facilities, user, setFacilities, activeFacility, se
     <div className="space-y-12">
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 px-2">
         <div>
-           <h2 className="text-4xl font-black font-serif text-slate-900">Custom Facilities</h2>
-           <p className="text-slate-500">Tailor-made tools for your unique family legacy.</p>
+           <h2 className="text-4xl font-black font-serif text-slate-900">Toolbox</h2>
+           <p className="text-slate-500">Add your own tools for recipes, event plans, or secrets.</p>
         </div>
-        <Button onClick={() => setIsModalOpen(true)} icon={PlusCircle}>Launch New Facility</Button>
+        <Button onClick={() => setIsModalOpen(true)} icon={PlusCircle}>{t.createFacility}</Button>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
         {facilities.map((f: CustomFacility) => (
           <Card key={f.id} className="p-10 space-y-6 flex flex-col items-start bg-emerald-50/10 hover:border-emerald-200 transition-all group relative overflow-hidden">
-             <div className="w-16 h-16 bg-white rounded-3xl flex items-center justify-center border border-emerald-100 shadow-sm transition-transform group-hover:scale-110 group-hover:rotate-3 shadow-emerald-600/5">
+             <div className="w-16 h-16 bg-white rounded-3xl flex items-center justify-center border border-emerald-100 shadow-sm transition-transform group-hover:scale-110 shadow-emerald-600/5">
                 <LayoutGrid className="w-8 h-8 text-emerald-600" />
              </div>
              <div className="space-y-2 flex-1">
-                <h3 className="text-2xl font-black font-serif text-slate-900">{f.title}</h3>
-                <p className="text-slate-500 line-clamp-3 leading-relaxed">{f.description}</p>
+                <h3 className="text-2xl font-black font-serif text-slate-900 break-words">{f.title}</h3>
+                <p className="text-slate-500 break-words leading-relaxed">{f.description}</p>
                 <button onClick={() => {
-                   const text = `🛠️ *Family Facility: ${f.title}*\nContext: ${f.description}\n\nAccess yours in Family Shaastra.`;
+                   const text = `🛠️ *Family Tool: ${f.title}*\nContext: ${f.description}\n\nAccess yours in Family Shaastra.`;
                    window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank');
                  }} className="text-[10px] font-black text-emerald-600 uppercase tracking-widest flex items-center gap-1.5 mt-2">
-                  <Share2 className="w-3 h-3" /> WhatsApp Invite
+                  <Share2 className="w-3 h-3" /> Share Tool
                 </button>
              </div>
-             <Button variant="secondary" className="w-full py-4 !rounded-2xl" onClick={() => setActiveFacility(f)}>Enter Facility</Button>
+             <Button variant="secondary" className="w-full py-4 !rounded-2xl" onClick={() => setActiveFacility(f)}>Open Tool</Button>
           </Card>
         ))}
         {facilities.length === 0 && (
-           <div 
-             onClick={() => setIsModalOpen(true)}
-             className="col-span-full py-32 border-4 border-dashed border-slate-100 rounded-[3rem] flex flex-col items-center justify-center gap-6 cursor-pointer hover:bg-emerald-50 hover:border-emerald-100 transition-all group"
-           >
-              <LayoutGrid className="w-20 h-20 text-slate-200 group-hover:text-emerald-200" />
-              <div className="text-center">
-                <p className="text-xl font-black text-slate-300">No facilities active yet.</p>
-                <p className="text-sm text-slate-400 font-bold">Create a Wedding Planner, Recipe Book, or Health Log.</p>
-              </div>
-           </div>
+          <div 
+            onClick={() => setIsModalOpen(true)}
+            className="col-span-full py-32 border-4 border-dashed border-slate-100 rounded-[3rem] flex flex-col items-center justify-center gap-6 cursor-pointer hover:bg-emerald-50 hover:border-emerald-100 transition-all group"
+          >
+             <LayoutGrid className="w-20 h-20 text-slate-200 group-hover:text-emerald-200" />
+             <div className="text-center">
+               <p className="text-xl font-black text-slate-300">Toolbox is empty.</p>
+               <p className="text-sm text-slate-400 font-bold">Add a tool for recipes, health, or reunions.</p>
+             </div>
+          </div>
         )}
       </div>
 
-      <Modal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} title="New Family Facility">
+      <Modal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} title="New Tool">
         <form onSubmit={handleCreate} className="space-y-6">
            <div className="space-y-3">
-              <label className="text-xs font-black uppercase tracking-widest text-slate-400 pl-2">Facility Name</label>
+              <label className="text-xs font-black uppercase tracking-widest text-slate-400 pl-2">Tool Name</label>
               <input required className="w-full bg-slate-50 border border-slate-100 rounded-3xl p-5 font-bold focus:ring-4 focus:ring-emerald-500/5 outline-none transition-all" value={formData.title} onChange={e => setFormData({...formData, title: e.target.value})} placeholder="e.g. Grandma's Secret Recipes" />
            </div>
            <div className="space-y-3">
-              <label className="text-xs font-black uppercase tracking-widest text-slate-400 pl-2">Purpose / Context</label>
-              <textarea required className="w-full bg-slate-50 border border-slate-100 rounded-3xl p-5 font-bold min-h-[120px] focus:ring-4 focus:ring-emerald-500/5 outline-none transition-all" value={formData.description} onChange={e => setFormData({...formData, description: e.target.value})} placeholder="What is the goal of this customized tool?" />
+              <label className="text-xs font-black uppercase tracking-widest text-slate-400 pl-2">What is it for?</label>
+              <textarea required className="w-full bg-slate-50 border border-slate-100 rounded-3xl p-5 font-bold min-h-[120px] focus:ring-4 focus:ring-emerald-500/5 outline-none transition-all" value={formData.description} onChange={e => setFormData({...formData, description: e.target.value})} placeholder="Short description..." />
            </div>
-           <Button className="w-full py-6 rounded-3xl shadow-2xl shadow-emerald-600/30" icon={PlusCircle}>Establish Facility Now</Button>
+           <Button className="w-full py-6 rounded-3xl shadow-2xl shadow-emerald-600/30" icon={PlusCircle}>Add to Toolbox</Button>
         </form>
       </Modal>
     </div>
@@ -1580,8 +1588,8 @@ function SettingsView({ t, user, invitations, setInvitations, setMembers, naviga
                              <Mail className="w-5 h-5" />
                           </div>
                           <div>
-                             <p className="font-bold text-slate-900 text-sm">{invite.senderName}</p>
-                             <p className="text-[10px] text-slate-500 font-medium">Invited you to connect</p>
+                             <p className="font-bold text-slate-900 text-sm break-words">{invite.senderName}</p>
+                             <p className="text-[10px] text-slate-500 font-medium break-words">Invited you to connect</p>
                           </div>
                        </div>
                        <Button variant="accent" className="text-xs py-2 px-4 shadow-none" onClick={() => acceptInvite(invite)}>Accept</Button>
@@ -1604,8 +1612,8 @@ function SettingsView({ t, user, invitations, setInvitations, setMembers, naviga
                           {m.photoUrl ? <img src={m.photoUrl} className="w-full h-full object-cover" /> : <Users className="w-5 h-5 m-2.5 text-slate-300" />}
                        </div>
                        <div>
-                          <p className="font-bold text-slate-900 text-sm">{m.name}</p>
-                          <p className="text-[10px] text-slate-400 uppercase font-black tracking-widest">{m.relation}</p>
+                          <p className="font-bold text-slate-900 text-sm break-words">{m.name}</p>
+                          <p className="text-[10px] text-slate-400 uppercase font-black tracking-widest break-words">{m.relation}</p>
                        </div>
                     </div>
                     <button onClick={() => deleteMember(m.id)} className="p-2 text-slate-300 hover:text-red-500 transition-colors">
@@ -1623,8 +1631,8 @@ function SettingsView({ t, user, invitations, setInvitations, setMembers, naviga
               <div className="flex items-center gap-6">
                 <img src={user.photoURL || ''} alt="" className="w-20 h-20 rounded-[2rem] border-4 border-slate-50 shadow-inner" />
                 <div className="space-y-0.5">
-                  <h3 className="text-2xl font-black font-serif text-slate-900 leading-none">{user.displayName}</h3>
-                  <p className="text-slate-400 text-sm font-bold">{user.email}</p>
+                  <h3 className="text-2xl font-black font-serif text-slate-900 leading-none break-words">{user.displayName}</h3>
+                  <p className="text-slate-400 text-sm font-bold break-all">{user.email}</p>
                 </div>
               </div>
 
@@ -1745,8 +1753,8 @@ function NotificationsTab({ t, notifications }: any) {
                    <Bell className="w-8 h-8" />
                 </div>
                 <div className="space-y-1">
-                   <h4 className="font-bold text-slate-900 leading-tight">{n.title}</h4>
-                   <p className="text-slate-500 text-sm">{n.body}</p>
+                   <h4 className="font-bold text-slate-900 leading-tight break-words">{n.title}</h4>
+                   <p className="text-slate-500 text-sm break-words">{n.body}</p>
                    <p className="text-[10px] font-black text-slate-300 uppercase pt-2">
                      {format(new Date(n.date), 'MMM dd, HH:mm')}
                    </p>

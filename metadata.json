@@ -1,5 +1,5 @@
 {
   "name": "Family Shaastra",
-  "description": "Family in an app. Family Shaastra is your digital sanctuary for preserving family history. Record memories, grow your family tree, and share milestones securely across generations.",
+  "description": "The complete family companion. Build your family tree, plan big reunions, and save your records, memories, and time capsules in one safe digital home.",
   "requestFramePermissions": ["camera", "microphone", "geolocation"]
 }
